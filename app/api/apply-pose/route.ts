@@ -1,35 +1,28 @@
-import { InferenceClient } from "@huggingface/inference";
 import { NextRequest, NextResponse } from "next/server";
 import { ApiResponse } from "@/types/character";
-
-const client = new InferenceClient(process.env.HF_ACCESS_TOKEN);
 
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
   try {
     const { identityPrompt, poseName } = await req.json();
 
     if (!identityPrompt) {
-      return NextResponse.json(
-        { error: "Identity prompt is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Identity prompt is required." }, { status: 400 });
     }
 
-    // Use textToImage anchored by character identity description
-    const imageOutput = await client.textToImage({
-      model: "black-forest-labs/FLUX.1-schnell",
-      inputs: `visual novel character sprite, full body standing in ${poseName || "standing pose"}, ${identityPrompt}, detailed anime style, clean white background`,
-    });
+    const fullPrompt = `1girl, visual novel character sprite, full body standing in ${poseName || "standing pose"}, masterwork anime artwork, clean white background, ${identityPrompt}`;
+    const encodedPrompt = encodeURIComponent(fullPrompt);
+    const seed = Math.floor(Math.random() * 999999);
 
-    let imageUrl: string;
-    if (typeof imageOutput === "string") {
-      imageUrl = imageOutput;
-    } else {
-      const blob = imageOutput as Blob;
-      const arrayBuffer = await blob.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      imageUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    const url = `https://pollinations.ai/prompt/${encodedPrompt}?width=832&height=1216&seed=${seed}&nologo=true&model=flux`;
+
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error("Failed to fetch pose sprite from Pollinations service.");
     }
+
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const imageUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
 
     return NextResponse.json({ imageUrl });
   } catch (error: any) {
