@@ -24,18 +24,36 @@ export default function Home() {
   const [expressionSprite, setExpressionSprite] = useState<string | null>(null);
   const [loadingExpression, setLoadingExpression] = useState<boolean>(false);
 
-  const handleFileUpload = (
-    e: ChangeEvent<HTMLInputElement>,
-    setter: (val: string) => void
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      if (typeof reader.result === "string") setter(reader.result);
+// Replace your handleFileUpload function in page.tsx with this compressed version:
+const handleFileUpload = (
+  e: ChangeEvent<HTMLInputElement>,
+  setter: (val: string) => void
+) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = (event) => {
+    const img = new Image();
+    img.src = event.target?.result as string;
+    img.onload = () => {
+      // Create canvas to resize image
+      const canvas = document.createElement("canvas");
+      const MAX_WIDTH = 768; // Ideal resolution for SD ControlNet
+      const scale = MAX_WIDTH / img.width;
+      canvas.width = MAX_WIDTH;
+      canvas.height = img.height * scale;
+
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // Export compressed JPEG
+      const compressedBase64 = canvas.toDataURL("image/jpeg", 0.8);
+      setter(compressedBase64);
     };
   };
+};
 
   const handleGeneratePose = async () => {
     if (!poseImage) return;

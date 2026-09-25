@@ -1,5 +1,6 @@
 import Replicate from "replicate";
 import { NextRequest, NextResponse } from "next/server";
+import { ApiResponse } from "../generate-pose/route";
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
@@ -40,11 +41,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     const imageUrl = Array.isArray(output) ? output[0] : (output as unknown as string);
 
     return NextResponse.json({ imageUrl });
-  } catch (error) {
-    console.error("Expression Generation Error:", error);
-    return NextResponse.json(
-      { error: "Failed to generate expression variation." },
-      { status: 500 }
-    );
-  }
+} catch (error: any) {
+  console.error("Generation Error:", error);
+  return NextResponse.json(
+    { error: error?.message || "Internal Server Error" },
+    { status: 500 }
+  );
+}
 }
