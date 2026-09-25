@@ -30,7 +30,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: identityPrompt }),
       });
-      const data: ApiResponse = await res.json();
+
+      const data: ApiResponse = await res.json().catch(() => ({
+        error: "Server returned an invalid response.",
+      }));
+
       if (data.imageUrl) {
         const newChar: CharacterProfile = {
           id: Date.now().toString(),
@@ -44,10 +48,10 @@ export default function Home() {
         setActiveTab("pose");
         setCharName("");
       } else {
-        alert(data.error);
+        alert(data.error || "Failed to create character. Please try again.");
       }
     } catch {
-      alert("Failed to create character.");
+      alert("Failed to connect to the server. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -67,7 +71,11 @@ export default function Home() {
           poseName,
         }),
       });
-      const data: ApiResponse = await res.json();
+
+      const data: ApiResponse = await res.json().catch(() => ({
+        error: "Server returned an invalid response.",
+      }));
+
       if (data.imageUrl) {
         const newPose = {
           id: Date.now().toString(),
@@ -82,10 +90,10 @@ export default function Home() {
         );
         setActiveTab("expression");
       } else {
-        alert(data.error);
+        alert(data.error || "Failed to generate pose sprite. Please try again.");
       }
     } catch {
-      alert("Failed to generate pose sprite.");
+      alert("Failed to connect to the server. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -108,7 +116,11 @@ export default function Home() {
           identityPrompt: activeCharacter.identityPrompt,
         }),
       });
-      const data: ApiResponse = await res.json();
+
+      const data: ApiResponse = await res.json().catch(() => ({
+        error: "Server returned an invalid response.",
+      }));
+
       if (data.imageUrl) {
         const newExpr = {
           id: Date.now().toString(),
@@ -130,10 +142,10 @@ export default function Home() {
           )
         );
       } else {
-        alert(data.error);
+        alert(data.error || "Failed to generate expression. Please try again.");
       }
     } catch {
-      alert("Failed to generate expression.");
+      alert("Failed to connect to the server. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -141,7 +153,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-8">
-      <h1 className="text-3xl font-bold mb-8 text-center">Visual Novel Character Creator</h1>
+      <h1 className="text-3xl font-bold mb-8 text-center">Visual Novel Character Studio</h1>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Sidebar: Character Roster */}
@@ -187,7 +199,7 @@ export default function Home() {
             <button
               onClick={() => setActiveTab("pose")}
               disabled={!activeCharacter}
-              className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 ${
+              className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed ${
                 activeTab === "pose" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
               }`}
             >
@@ -196,7 +208,7 @@ export default function Home() {
             <button
               onClick={() => setActiveTab("expression")}
               disabled={!activeCharacter || activeCharacter.poses.length === 0}
-              className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 ${
+              className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed ${
                 activeTab === "expression" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
               }`}
             >
@@ -230,7 +242,7 @@ export default function Home() {
               <button
                 onClick={handleCreateCharacter}
                 disabled={loading || !charName}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold"
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
                 {loading ? "Generating Identity Anchor..." : "Generate Character Anchor"}
               </button>
@@ -254,7 +266,7 @@ export default function Home() {
               <button
                 onClick={handleApplyPose}
                 disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold"
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
                 {loading ? "Generating Pose Sprite..." : "Generate Pose Sprite"}
               </button>
@@ -283,7 +295,7 @@ export default function Home() {
                       <button
                         onClick={() => handleApplyExpression(pose.id)}
                         disabled={loading}
-                        className="bg-blue-600 hover:bg-blue-500 text-xs px-3 py-1.5 rounded font-bold"
+                        className="bg-blue-600 hover:bg-blue-500 text-xs px-3 py-1.5 rounded font-bold transition cursor-pointer disabled:cursor-not-allowed"
                       >
                         + Generate Expression
                       </button>

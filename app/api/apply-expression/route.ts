@@ -18,9 +18,25 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
 
     const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${seed}&nologo=true&model=turbo`;
 
-    const res = await fetch(pollinationsUrl, { cache: "no-store" });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(pollinationsUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    clearTimeout(timeoutId);
+
     if (!res.ok) {
-      throw new Error(`Pollinations service error: ${res.status}`);
+      return NextResponse.json(
+        { error: `Pollinations service returned status ${res.status}` },
+        { status: 502 }
+      );
     }
 
     const arrayBuffer = await res.arrayBuffer();
@@ -30,9 +46,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     return NextResponse.json({ imageUrl });
   } catch (error: any) {
     console.error("Apply Expression Error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Failed to generate expression variation." },
-      { status: 500 }
-    );
+    const errorMessage = error?.name === "AbortError" 
+      ? "Generation timed out. Please try again." 
+      : (error?.message || "Failed to generate expression variation.");
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
