@@ -10,22 +10,23 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
   try {
     const { baseImageUrl, faceMaskImage, expressionPrompt, characterPrompt }: ExpressionRequestBody = await req.json();
 
-    if (!baseImageUrl || !expressionPrompt) {
+    if (!baseImageUrl || !expressionPrompt || !faceMaskImage) {
       return NextResponse.json(
-        { error: "Base image and expression prompt are required." },
+        { error: "Base image, face mask, and expression prompt are required." },
         { status: 400 }
       );
     }
 
+    // Using stability-ai/stable-diffusion-inpainting
     const output = await replicate.run(
-      "sepal/sdxl-inpainting:aca001c8b137114d5e594c68f7084ae6d82f364758aab8d997b233e8ef3c4d93",
+      "stability-ai/stable-diffusion-inpainting:95b2c7828604099430f351d586b9d9c8824e5088265d29b3071c561376326e5e",
       {
         input: {
           image: baseImageUrl,
           mask: faceMaskImage,
-          prompt: `${expressionPrompt}, facial expression, detailed anime face, ${characterPrompt}`,
-          negative_prompt: "distorted face, extra eyes, bad eyes, blurry",
-          prompt_strength: 0.7,
+          prompt: `${expressionPrompt}, detailed anime facial features, ${characterPrompt}`,
+          negative_prompt: "distorted face, extra eyes, bad eyes, blurry, dark background",
+          num_inference_steps: 25,
         },
       }
     );

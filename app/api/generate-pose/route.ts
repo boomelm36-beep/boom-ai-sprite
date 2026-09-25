@@ -17,14 +17,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       );
     }
 
+    // Using jagilley/controlnet-pose model
     const output = await replicate.run(
-      "thibaud/controlnet-openpose:230716d31db87097071e4f57ae458c03e454f855a7d0e3a4e12e3e56598c2f1f",
+      "jagilley/controlnet-pose:e3f5c08d7d157d9e7592931e9c20a9a4b8eb25c56d78ec3a579bf6316fa9c878",
       {
         input: {
           image: poseImage,
-          prompt: `1girl, visual novel sprite, high quality anime artwork, white background, ${prompt}`,
-          negative_prompt: "disfigured, low quality, complex background",
-          num_inference_steps: 20,
+          prompt: `1girl, visual novel character sprite, anime style, white background, ${prompt}`,
+          negative_prompt: "disfigured, bad hands, low resolution, dark background, complex background",
+          num_inference_steps: 25,
         },
       }
     );
