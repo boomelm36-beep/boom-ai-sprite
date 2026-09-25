@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CharacterProfile } from "@/types/character";
 
-// Client-side helper function to fetch directly from Pollinations
+// Robust client-side helper with automatic engine fallback for 500 errors
 async function fetchPollinationsImage(
   prompt: string,
   width = 512,
@@ -11,22 +11,35 @@ async function fetchPollinationsImage(
 ): Promise<string> {
   const encodedPrompt = encodeURIComponent(prompt);
   const seed = Math.floor(Math.random() * 999999);
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true&model=turbo`;
 
-  const response = await fetch(url);
+  const urlVariants = [
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true&model=turbo`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${seed}&nologo=true`
+  ];
 
-  if (response.status === 429) {
-    throw new Error(
-      "Pollinations rate limit reached on your IP. Please wait 10 seconds and try again."
-    );
+  let lastStatus = 500;
+
+  for (const url of urlVariants) {
+    try {
+      const response = await fetch(url);
+
+      if (response.status === 429) {
+        throw new Error("Pollinations rate limit reached on your IP. Please wait 10 seconds.");
+      }
+
+      if (response.ok) {
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      }
+
+      lastStatus = response.status;
+    } catch (err: any) {
+      if (err.message?.includes("rate limit")) throw err;
+    }
   }
 
-  if (!response.ok) {
-    throw new Error(`Pollinations service returned status ${response.status}`);
-  }
-
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
+  throw new Error(`Pollinations GPU servers are currently busy (Status ${lastStatus}). Please click generate again in a moment.`);
 }
 
 export default function Home() {
@@ -50,7 +63,7 @@ export default function Home() {
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // 1. Generate Character Hero Image (Client-Side)
+  // 1. Generate Character Hero Image
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
@@ -77,7 +90,7 @@ export default function Home() {
     }
   };
 
-  // 2. Generate New Pose Sprite (Client-Side)
+  // 2. Generate New Pose Sprite
   const handleApplyPose = async () => {
     if (!activeCharacter) return;
     setLoading(true);
@@ -108,7 +121,7 @@ export default function Home() {
     }
   };
 
-  // 3. Generate Expression Variant (Client-Side)
+  // 3. Generate Expression Variant
   const handleApplyExpression = async (poseId: string) => {
     if (!activeCharacter) return;
     const targetPose = activeCharacter.poses.find((p) => p.id === poseId);
