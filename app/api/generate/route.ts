@@ -5,48 +5,49 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-interface GenerateRequestBody {
+export interface PoseRequestBody {
   prompt: string;
   poseImage: string;
+  seed?: number;
 }
 
-interface GenerateApiResponse {
+export interface ApiResponse {
   imageUrl?: string;
   error?: string;
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse<GenerateApiResponse>> {
+export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
   try {
-    const { prompt, poseImage }: GenerateRequestBody = await req.json();
+    const { prompt, poseImage, seed }: PoseRequestBody = await req.json();
 
     if (!prompt || !poseImage) {
       return NextResponse.json(
-        { error: "Both prompt and pose image are required." },
+        { error: "Prompt and Pose Image are required." },
         { status: 400 }
       );
     }
 
-    // Run OpenPose ControlNet via Replicate
+    // Generate base character body using OpenPose ControlNet
     const output = (await replicate.run(
-      "rossjanes/controlnet-openpose:31bfcc3d64194daae93d56a29be6a86c6b45d2ee5fc757d5cbba9ec7e923e200",
+      "lucataco/sdxl-controlnet-openpose:d63e0b238b2d963d90348e2dad19830fbe372a7a43d90d234b2b63cae76d4397",
       {
         input: {
           image: poseImage,
-          prompt: `1girl, visual novel sprite, high quality anime artwork, white background, ${prompt}`,
-          negative_prompt: "disfigured, bad anatomy, complex background",
-          num_inference_steps: 25,
+          prompt: `1girl, visual novel character sprite, full body, anime style, white background, ${prompt}`,
+          negative_prompt: "disfigured, bad hands, low resolution, dark background, complex background",
           guidance_scale: 7.5,
+          ...(seed !== undefined && { seed }),
         },
       }
     )) as string[];
 
-    const imageUrl = output[1] || output[0];
+    const imageUrl = Array.isArray(output) ? output[0] : (output as unknown as string);
 
     return NextResponse.json({ imageUrl });
   } catch (error) {
-    console.error("AI Generation Error:", error);
+    console.error("Pose Generation Error:", error);
     return NextResponse.json(
-      { error: "Failed to generate sprite." },
+      { error: "Failed to generate pose sprite." },
       { status: 500 }
     );
   }
