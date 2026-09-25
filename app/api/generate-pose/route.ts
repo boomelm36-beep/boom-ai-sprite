@@ -1,39 +1,41 @@
 import Replicate from "replicate";
 import { NextRequest, NextResponse } from "next/server";
+import { ApiResponse, ExpressionRequestBody } from "@/types/sprite";
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
   try {
-    const { prompt, poseImage } = await req.json();
+    const { baseImageUrl, faceMaskImage, expressionPrompt, characterPrompt }: ExpressionRequestBody = await req.json();
 
-    if (!process.env.REPLICATE_API_TOKEN) {
+    if (!baseImageUrl || !expressionPrompt) {
       return NextResponse.json(
-        { error: "REPLICATE_API_TOKEN environment variable is not set." },
-        { status: 500 }
+        { error: "Base image and expression prompt are required." },
+        { status: 400 }
       );
     }
 
     const output = await replicate.run(
-      "thibaud/controlnet-openpose:230716d31db87097071e4f57ae458c03e454f855a7d0e3a4e12e3e56598c2f1f",
+      "sepal/sdxl-inpainting:aca001c8b137114d5e594c68f7084ae6d82f364758aab8d997b233e8ef3c4d93",
       {
         input: {
-          image: poseImage,
-          prompt: `1girl, visual novel sprite, high quality anime artwork, white background, ${prompt}`,
-          negative_prompt: "disfigured, low quality, complex background",
-          num_inference_steps: 20,
+          image: baseImageUrl,
+          mask: faceMaskImage,
+          prompt: `${expressionPrompt}, facial expression, detailed anime face, ${characterPrompt}`,
+          negative_prompt: "distorted face, extra eyes, bad eyes, blurry",
+          prompt_strength: 0.7,
         },
       }
     );
 
-    const imageUrl = Array.isArray(output) ? output[0] : output;
+    const imageUrl = Array.isArray(output) ? output[0] : (output as string);
     return NextResponse.json({ imageUrl });
   } catch (error: any) {
-    console.error("Error:", error);
+    console.error("Expression Generation Error:", error);
     return NextResponse.json(
-      { error: error?.message || "Failed to generate sprite" },
+      { error: error?.message || "Failed to generate expression variation." },
       { status: 500 }
     );
   }

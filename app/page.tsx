@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, ChangeEvent } from "react";
-import { ApiResponse } from "./api/generate-pose/route";
+import { ApiResponse } from "@/types/sprite";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"pose" | "expression">("pose");
