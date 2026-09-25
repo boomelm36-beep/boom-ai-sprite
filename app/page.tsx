@@ -1,7 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { CharacterProfile, ApiResponse } from "@/types/character";
+import { CharacterProfile } from "@/types/character";
+
+// Client-side helper function to fetch directly from Pollinations
+async function fetchPollinationsImage(
+  prompt: string,
+  width = 512,
+  height = 768
+): Promise<string> {
+  const encodedPrompt = encodeURIComponent(prompt);
+  const seed = Math.floor(Math.random() * 999999);
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true&model=turbo`;
+
+  const response = await fetch(url);
+
+  if (response.status === 429) {
+    throw new Error(
+      "Pollinations rate limit reached on your IP. Please wait 10 seconds and try again."
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(`Pollinations service returned status ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
 
 export default function Home() {
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
@@ -12,94 +38,77 @@ export default function Home() {
 
   // Form Inputs
   const [charName, setCharName] = useState("");
-  const [identityPrompt, setIdentityPrompt] = useState("long silver hair, sharp red eyes, navy blazer");
+  const [identityPrompt, setIdentityPrompt] = useState(
+    "long silver hair, sharp red eyes, navy blazer"
+  );
   const [poseName, setPoseName] = useState("crossed arms, confident stance");
-  const [expressionPrompt, setExpressionPrompt] = useState("happy smiling expression, blushing cheeks");
+  const [expressionPrompt, setExpressionPrompt] = useState(
+    "happy smiling expression, blushing cheeks"
+  );
 
   const [loading, setLoading] = useState(false);
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // 1. Generate Character Hero Image
+  // 1. Generate Character Hero Image (Client-Side)
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/create-character", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: identityPrompt }),
-      });
+      const fullPrompt = `1girl, visual novel character sprite, front view portrait, masterwork anime artwork, clean white background, ${identityPrompt}`;
+      const imageUrl = await fetchPollinationsImage(fullPrompt, 512, 768);
 
-      const data: ApiResponse = await res.json().catch(() => ({
-        error: "Server returned an invalid response.",
-      }));
+      const newChar: CharacterProfile = {
+        id: Date.now().toString(),
+        name: charName,
+        identityPrompt,
+        heroImageUrl: imageUrl,
+        poses: [],
+      };
 
-      if (data.imageUrl) {
-        const newChar: CharacterProfile = {
-          id: Date.now().toString(),
-          name: charName,
-          identityPrompt,
-          heroImageUrl: data.imageUrl,
-          poses: [],
-        };
-        setCharacters((prev) => [...prev, newChar]);
-        setSelectedCharacterId(newChar.id);
-        setActiveTab("pose");
-        setCharName("");
-      } else {
-        alert(data.error || "Failed to create character. Please try again.");
-      }
-    } catch {
-      alert("Failed to connect to the server. Please try again.");
+      setCharacters((prev) => [...prev, newChar]);
+      setSelectedCharacterId(newChar.id);
+      setActiveTab("pose");
+      setCharName("");
+    } catch (err: any) {
+      alert(err?.message || "Failed to generate character.");
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Generate New Pose Sprite
+  // 2. Generate New Pose Sprite (Client-Side)
   const handleApplyPose = async () => {
     if (!activeCharacter) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/apply-pose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          heroImageUrl: activeCharacter.heroImageUrl,
-          identityPrompt: activeCharacter.identityPrompt,
-          poseName,
-        }),
-      });
+      const fullPrompt = `1girl, visual novel character sprite, full body standing in ${
+        poseName || "standing pose"
+      }, masterwork anime artwork, clean white background, ${activeCharacter.identityPrompt}`;
 
-      const data: ApiResponse = await res.json().catch(() => ({
-        error: "Server returned an invalid response.",
-      }));
+      const imageUrl = await fetchPollinationsImage(fullPrompt, 512, 768);
 
-      if (data.imageUrl) {
-        const newPose = {
-          id: Date.now().toString(),
-          poseName,
-          spriteUrl: data.imageUrl,
-          expressions: [],
-        };
-        setCharacters((prev) =>
-          prev.map((c) =>
-            c.id === activeCharacter.id ? { ...c, poses: [...c.poses, newPose] } : c
-          )
-        );
-        setActiveTab("expression");
-      } else {
-        alert(data.error || "Failed to generate pose sprite. Please try again.");
-      }
-    } catch {
-      alert("Failed to connect to the server. Please try again.");
+      const newPose = {
+        id: Date.now().toString(),
+        poseName,
+        spriteUrl: imageUrl,
+        expressions: [],
+      };
+
+      setCharacters((prev) =>
+        prev.map((c) =>
+          c.id === activeCharacter.id ? { ...c, poses: [...c.poses, newPose] } : c
+        )
+      );
+      setActiveTab("expression");
+    } catch (err: any) {
+      alert(err?.message || "Failed to generate pose sprite.");
     } finally {
       setLoading(false);
     }
   };
 
-  // 3. Generate Expression Variant
+  // 3. Generate Expression Variant (Client-Side)
   const handleApplyExpression = async (poseId: string) => {
     if (!activeCharacter) return;
     const targetPose = activeCharacter.poses.find((p) => p.id === poseId);
@@ -107,45 +116,32 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/apply-expression", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          poseSpriteUrl: targetPose.spriteUrl,
-          expressionPrompt,
-          identityPrompt: activeCharacter.identityPrompt,
-        }),
-      });
+      const fullPrompt = `1girl, close-up face avatar, visual novel character sprite, ${expressionPrompt}, facial expression, masterwork anime artwork, clean white background, ${activeCharacter.identityPrompt}`;
 
-      const data: ApiResponse = await res.json().catch(() => ({
-        error: "Server returned an invalid response.",
-      }));
+      const imageUrl = await fetchPollinationsImage(fullPrompt, 512, 512);
 
-      if (data.imageUrl) {
-        const newExpr = {
-          id: Date.now().toString(),
-          name: expressionPrompt,
-          imageUrl: data.imageUrl,
-        };
-        setCharacters((prev) =>
-          prev.map((c) =>
-            c.id === activeCharacter.id
-              ? {
-                  ...c,
-                  poses: c.poses.map((p) =>
-                    p.id === poseId
-                      ? { ...p, expressions: [...p.expressions, newExpr] }
-                      : p
-                  ),
-                }
-              : c
-          )
-        );
-      } else {
-        alert(data.error || "Failed to generate expression. Please try again.");
-      }
-    } catch {
-      alert("Failed to connect to the server. Please try again.");
+      const newExpr = {
+        id: Date.now().toString(),
+        name: expressionPrompt,
+        imageUrl,
+      };
+
+      setCharacters((prev) =>
+        prev.map((c) =>
+          c.id === activeCharacter.id
+            ? {
+                ...c,
+                poses: c.poses.map((p) =>
+                  p.id === poseId
+                    ? { ...p, expressions: [...p.expressions, newExpr] }
+                    : p
+                ),
+              }
+            : c
+        )
+      );
+    } catch (err: any) {
+      alert(err?.message || "Failed to generate expression.");
     } finally {
       setLoading(false);
     }
@@ -153,7 +149,9 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-8">
-      <h1 className="text-3xl font-bold mb-8 text-center">Visual Novel Character Studio</h1>
+      <h1 className="text-3xl font-bold mb-8 text-center">
+        Visual Novel Character Studio
+      </h1>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Sidebar: Character Roster */}
@@ -173,7 +171,11 @@ export default function Home() {
                       : "border-gray-800 bg-gray-800/50 hover:border-gray-700"
                   }`}
                 >
-                  <img src={c.heroImageUrl} alt={c.name} className="w-12 h-12 rounded-full object-cover" />
+                  <img
+                    src={c.heroImageUrl}
+                    alt={c.name}
+                    className="w-12 h-12 rounded-full object-cover border border-gray-700"
+                  />
                   <div>
                     <p className="font-bold">{c.name}</p>
                     <p className="text-xs text-gray-400">{c.poses.length} Poses</p>
@@ -191,7 +193,9 @@ export default function Home() {
             <button
               onClick={() => setActiveTab("create")}
               className={`flex-1 py-2 text-sm font-semibold rounded-md transition ${
-                activeTab === "create" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
+                activeTab === "create"
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-400 hover:text-white"
               }`}
             >
               1. New Character
@@ -200,7 +204,9 @@ export default function Home() {
               onClick={() => setActiveTab("pose")}
               disabled={!activeCharacter}
               className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed ${
-                activeTab === "pose" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
+                activeTab === "pose"
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-400 hover:text-white"
               }`}
             >
               2. Add Pose
@@ -209,7 +215,9 @@ export default function Home() {
               onClick={() => setActiveTab("expression")}
               disabled={!activeCharacter || activeCharacter.poses.length === 0}
               className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed ${
-                activeTab === "expression" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-white"
+                activeTab === "expression"
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-400 hover:text-white"
               }`}
             >
               3. Face Expressions
@@ -231,7 +239,9 @@ export default function Home() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Identity Prompt (Features & Clothing)</label>
+                <label className="block text-sm text-gray-300 mb-1">
+                  Identity Prompt (Features & Clothing)
+                </label>
                 <textarea
                   value={identityPrompt}
                   onChange={(e) => setIdentityPrompt(e.target.value)}
@@ -252,7 +262,9 @@ export default function Home() {
           {/* Panel 2: Apply Pose */}
           {activeTab === "pose" && activeCharacter && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
-              <h2 className="text-lg font-bold text-blue-400">Step 2: Pose Studio ({activeCharacter.name})</h2>
+              <h2 className="text-lg font-bold text-blue-400">
+                Step 2: Pose Studio ({activeCharacter.name})
+              </h2>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Pose Description</label>
                 <input
@@ -276,7 +288,9 @@ export default function Home() {
           {/* Panel 3: Expressions & Gallery */}
           {activeTab === "expression" && activeCharacter && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-6">
-              <h2 className="text-lg font-bold text-blue-400">Step 3: Expressions for {activeCharacter.name}</h2>
+              <h2 className="text-lg font-bold text-blue-400">
+                Step 3: Expressions for {activeCharacter.name}
+              </h2>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Target Expression</label>
                 <input
@@ -289,9 +303,14 @@ export default function Home() {
 
               <div className="space-y-6">
                 {activeCharacter.poses.map((pose) => (
-                  <div key={pose.id} className="p-4 bg-gray-800/60 rounded-lg border border-gray-700">
+                  <div
+                    key={pose.id}
+                    className="p-4 bg-gray-800/60 rounded-lg border border-gray-700"
+                  >
                     <div className="flex justify-between items-center mb-3">
-                      <h3 className="font-semibold text-blue-300">Pose: {pose.poseName}</h3>
+                      <h3 className="font-semibold text-blue-300">
+                        Pose: {pose.poseName}
+                      </h3>
                       <button
                         onClick={() => handleApplyExpression(pose.id)}
                         disabled={loading}
@@ -302,13 +321,23 @@ export default function Home() {
                     </div>
                     <div className="flex gap-4 overflow-x-auto pb-2">
                       <div className="flex-shrink-0 text-center">
-                        <img src={pose.spriteUrl} alt="Base Pose" className="w-28 h-36 object-cover rounded border border-gray-600" />
+                        <img
+                          src={pose.spriteUrl}
+                          alt="Base Pose"
+                          className="w-28 h-36 object-cover rounded border border-gray-600"
+                        />
                         <span className="text-xs text-gray-400 mt-1 block">Base Pose</span>
                       </div>
                       {pose.expressions.map((exp) => (
                         <div key={exp.id} className="flex-shrink-0 text-center">
-                          <img src={exp.imageUrl} alt={exp.name} className="w-28 h-36 object-cover rounded border border-blue-500" />
-                          <span className="text-xs text-gray-300 mt-1 block truncate w-28">{exp.name}</span>
+                          <img
+                            src={exp.imageUrl}
+                            alt={exp.name}
+                            className="w-28 h-36 object-cover rounded border border-blue-500"
+                          />
+                          <span className="text-xs text-gray-300 mt-1 block truncate w-28">
+                            {exp.name}
+                          </span>
                         </div>
                       ))}
                     </div>
