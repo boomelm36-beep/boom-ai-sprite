@@ -13,16 +13,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     const encodedPrompt = encodeURIComponent(fullPrompt);
     const seed = Math.floor(Math.random() * 999999);
 
-    const url = `https://pollinations.ai/prompt/${encodedPrompt}?width=832&height=1216&seed=${seed}&nologo=true&model=flux`;
-
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) {
-      throw new Error("Failed to fetch pose sprite from Pollinations service.");
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const imageUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=832&height=1216&seed=${seed}&nologo=true&model=flux`;
 
     return NextResponse.json({ imageUrl });
   } catch (error: any) {
