@@ -4,32 +4,21 @@ import { ApiResponse } from "@/types/character";
 
 const client = new InferenceClient(process.env.HF_ACCESS_TOKEN);
 
-function base64ToBlob(base64: string): Blob {
-  const parts = base64.split(",");
-  const mime = parts[0]?.match(/:(.*?);/)?.[1] || "image/png";
-  const buffer = Buffer.from(parts[1] || base64, "base64");
-  return new Blob([buffer], { type: mime });
-}
-
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
   try {
-    const { heroImageUrl, identityPrompt, poseName } = await req.json();
+    const { identityPrompt, poseName } = await req.json();
 
-    if (!heroImageUrl || !identityPrompt) {
+    if (!identityPrompt) {
       return NextResponse.json(
-        { error: "Hero image and identity prompt are required." },
+        { error: "Identity prompt is required." },
         { status: 400 }
       );
     }
 
-    const heroBlob = base64ToBlob(heroImageUrl);
-
-    const imageOutput = await client.imageToImage({
+    // Use textToImage anchored by character identity description
+    const imageOutput = await client.textToImage({
       model: "black-forest-labs/FLUX.1-schnell",
-      inputs: heroBlob,
-      parameters: {
-        prompt: `visual novel character sprite, full body standing in ${poseName || "new pose"}, ${identityPrompt}, anime style, white background`,
-      },
+      inputs: `visual novel character sprite, full body standing in ${poseName || "standing pose"}, ${identityPrompt}, detailed anime style, clean white background`,
     });
 
     let imageUrl: string;

@@ -4,32 +4,21 @@ import { ApiResponse } from "@/types/character";
 
 const client = new InferenceClient(process.env.HF_ACCESS_TOKEN);
 
-function base64ToBlob(base64: string): Blob {
-  const parts = base64.split(",");
-  const mime = parts[0]?.match(/:(.*?);/)?.[1] || "image/png";
-  const buffer = Buffer.from(parts[1] || base64, "base64");
-  return new Blob([buffer], { type: mime });
-}
-
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
   try {
-    const { poseSpriteUrl, expressionPrompt, identityPrompt } = await req.json();
+    const { expressionPrompt, identityPrompt } = await req.json();
 
-    if (!poseSpriteUrl || !expressionPrompt) {
+    if (!expressionPrompt || !identityPrompt) {
       return NextResponse.json(
-        { error: "Pose sprite and expression prompt are required." },
+        { error: "Expression prompt and identity prompt are required." },
         { status: 400 }
       );
     }
 
-    const spriteBlob = base64ToBlob(poseSpriteUrl);
-
-    const imageOutput = await client.imageToImage({
+    // Use textToImage anchored by character identity description
+    const imageOutput = await client.textToImage({
       model: "black-forest-labs/FLUX.1-schnell",
-      inputs: spriteBlob,
-      parameters: {
-        prompt: `close-up visual novel face avatar, ${expressionPrompt}, facial expression, ${identityPrompt}, detailed anime style, white background`,
-      },
+      inputs: `visual novel character sprite close-up face avatar, ${expressionPrompt}, facial expression, ${identityPrompt}, detailed anime style, clean white background`,
     });
 
     let imageUrl: string;
@@ -46,7 +35,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
   } catch (error: any) {
     console.error("Apply Expression Error:", error);
     return NextResponse.json(
-      { error: error?.message || "Failed to generate expression variant." },
+      { error: error?.message || "Failed to generate expression variation." },
       { status: 500 }
     );
   }
