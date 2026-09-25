@@ -12,17 +12,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
     }
 
+    // FLUX.1-schnell is active on HF's free serverless API
     const imageOutput = await client.textToImage({
-      model: "runwayml/stable-diffusion-v1-5",
+      model: "black-forest-labs/FLUX.1-schnell",
       inputs: `1girl, visual novel character sprite, anime style, full body, white background, ${prompt}`,
-      parameters: {
-        negative_prompt: "disfigured, bad hands, low resolution, dark background",
-      },
     });
 
     let imageUrl: string;
 
-    // TypeScript Type Narrowing for Blob | string
     if (typeof imageOutput === "string") {
       imageUrl = imageOutput;
     } else {
