@@ -5,50 +5,36 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-export interface PoseRequestBody {
-  prompt: string;
-  poseImage: string;
-  seed?: number;
-}
-
-export interface ApiResponse {
-  imageUrl?: string;
-  error?: string;
-}
-
-export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
+export async function POST(req: NextRequest) {
   try {
-    const { prompt, poseImage, seed }: PoseRequestBody = await req.json();
+    const { prompt, poseImage } = await req.json();
 
-    if (!prompt || !poseImage) {
+    if (!process.env.REPLICATE_API_TOKEN) {
       return NextResponse.json(
-        { error: "Prompt and Pose Image are required." },
-        { status: 400 }
+        { error: "REPLICATE_API_TOKEN environment variable is not set." },
+        { status: 500 }
       );
     }
 
-    // Generate base character body using OpenPose ControlNet
-    const output = (await replicate.run(
-      "lucataco/sdxl-controlnet-openpose:d63e0b238b2d963d90348e2dad19830fbe372a7a43d90d234b2b63cae76d4397",
+    const output = await replicate.run(
+      "thibaud/controlnet-openpose:230716d31db87097071e4f57ae458c03e454f855a7d0e3a4e12e3e56598c2f1f",
       {
         input: {
           image: poseImage,
-          prompt: `1girl, visual novel character sprite, full body, anime style, white background, ${prompt}`,
-          negative_prompt: "disfigured, bad hands, low resolution, dark background, complex background",
-          guidance_scale: 7.5,
-          ...(seed !== undefined && { seed }),
+          prompt: `1girl, visual novel sprite, high quality anime artwork, white background, ${prompt}`,
+          negative_prompt: "disfigured, low quality, complex background",
+          num_inference_steps: 20,
         },
       }
-    )) as string[];
+    );
 
-    const imageUrl = Array.isArray(output) ? output[0] : (output as unknown as string);
-
+    const imageUrl = Array.isArray(output) ? output[0] : output;
     return NextResponse.json({ imageUrl });
-} catch (error: any) {
-  console.error("Generation Error:", error);
-  return NextResponse.json(
-    { error: error?.message || "Internal Server Error" },
-    { status: 500 }
-  );
-}
+  } catch (error: any) {
+    console.error("Error:", error);
+    return NextResponse.json(
+      { error: error?.message || "Failed to generate sprite" },
+      { status: 500 }
+    );
+  }
 }
