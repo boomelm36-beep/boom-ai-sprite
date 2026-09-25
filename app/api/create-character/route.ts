@@ -13,8 +13,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     const encodedPrompt = encodeURIComponent(fullPrompt);
     const seed = Math.floor(Math.random() * 999999);
 
-    // Return the direct Pollinations image CDN URL
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=832&height=1216&seed=${seed}&nologo=true&model=flux`;
+    // Fast 1-2 second generation using model=turbo at 512x768
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=768&seed=${seed}&nologo=true&model=turbo`;
+
+    const res = await fetch(pollinationsUrl, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`Pollinations service error: ${res.status}`);
+    }
+
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const imageUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
 
     return NextResponse.json({ imageUrl });
   } catch (error: any) {
