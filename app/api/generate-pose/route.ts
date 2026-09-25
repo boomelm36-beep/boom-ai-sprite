@@ -17,15 +17,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       );
     }
 
-    // Using jagilley/controlnet-pose model
+    // Verified version hash for jagilley/controlnet-pose
     const output = await replicate.run(
-      "jagilley/controlnet-pose:e3f5c08d7d157d9e7592931e9c20a9a4b8eb25c56d78ec3a579bf6316fa9c878",
+      "jagilley/controlnet-pose:0304f7f774ba7341ef754231f794b1ba3d129e3c46af3022241325ae0c50fb99",
       {
         input: {
           image: poseImage,
           prompt: `1girl, visual novel character sprite, anime style, white background, ${prompt}`,
-          negative_prompt: "disfigured, bad hands, low resolution, dark background, complex background",
-          num_inference_steps: 25,
+          a_prompt: "best quality, extremely detailed, masterwork",
+          n_prompt: "disfigured, bad hands, low resolution, dark background, complex background, blurry",
+          ddim_steps: 20,
+          scale: 9,
         },
       }
     );

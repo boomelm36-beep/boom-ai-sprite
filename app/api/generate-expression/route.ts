@@ -17,9 +17,9 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       );
     }
 
-    // Using stability-ai/stable-diffusion-inpainting
+    // Verified version hash for stability-ai/stable-diffusion-inpainting
     const output = await replicate.run(
-      "stability-ai/stable-diffusion-inpainting:95b2c7828604099430f351d586b9d9c8824e5088265d29b3071c561376326e5e",
+      "stability-ai/stable-diffusion-inpainting:95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
       {
         input: {
           image: baseImageUrl,
@@ -27,6 +27,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
           prompt: `${expressionPrompt}, detailed anime facial features, ${characterPrompt}`,
           negative_prompt: "distorted face, extra eyes, bad eyes, blurry, dark background",
           num_inference_steps: 25,
+          guidance_scale: 7.5,
         },
       }
     );
