@@ -3,46 +3,57 @@
 import { useState } from "react";
 import { CharacterProfile } from "@/types/character";
 
-// Robust client-side helper with automatic engine fallback for 500 errors
-async function fetchPollinationsImage(
+// Helper function to send txt2img requests directly to your local SD WebUI Forge API
+async function fetchLocalForgeSprite(
+  gpuApiUrl: string,
   prompt: string,
   width = 512,
   height = 768
 ): Promise<string> {
-  const encodedPrompt = encodeURIComponent(prompt);
-  const seed = Math.floor(Math.random() * 999999);
-
-  const urlVariants = [
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true&model=turbo`,
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${seed}&nologo=true`,
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?width=512&height=512&seed=${seed}&nologo=true`
-  ];
-
-  let lastStatus = 500;
-
-  for (const url of urlVariants) {
-    try {
-      const response = await fetch(url);
-
-      if (response.status === 429) {
-        throw new Error("Pollinations rate limit reached on your IP. Please wait 10 seconds.");
-      }
-
-      if (response.ok) {
-        const blob = await response.blob();
-        return URL.createObjectURL(blob);
-      }
-
-      lastStatus = response.status;
-    } catch (err: any) {
-      if (err.message?.includes("rate limit")) throw err;
-    }
+  if (!gpuApiUrl) {
+    throw new Error("Please enter a valid Local GPU Backend URL.");
   }
 
-  throw new Error(`Pollinations GPU servers are currently busy (Status ${lastStatus}). Please click generate again in a moment.`);
+  // Clean trailing slashes
+  const baseUrl = gpuApiUrl.replace(/\/$/, "");
+
+  const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt: `masterpiece, best quality, 1girl, visual novel character sprite, anime style, clean white background, ${prompt}`,
+      negative_prompt: "low quality, worst quality, bad anatomy, distorted, ugly, dark background",
+      steps: 20,
+      width: width,
+      height: height,
+      cfg_scale: 7,
+      sampler_name: "Euler a",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      "Failed to connect to GPU server. Check that WebUI Forge is running and your GPU URL is correct."
+    );
+  }
+
+  const data = await response.json();
+  const base64Image = data.images?.[0];
+
+  if (!base64Image) {
+    throw new Error("No image data returned from WebUI Forge.");
+  }
+
+  return `data:image/png;base64,${base64Image}`;
 }
 
 export default function Home() {
+  // Local GPU API Endpoint
+  const [gpuUrl, setGpuUrl] = useState("https://0d9ea4f5010b64eb50.gradio.live");
+
+  // Character Roster State
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
@@ -63,13 +74,13 @@ export default function Home() {
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // 1. Generate Character Hero Image
+  // 1. Generate Character Hero Image via Local GPU
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
     try {
-      const fullPrompt = `1girl, visual novel character sprite, front view portrait, masterwork anime artwork, clean white background, ${identityPrompt}`;
-      const imageUrl = await fetchPollinationsImage(fullPrompt, 512, 768);
+      const fullPrompt = `front view portrait, ${identityPrompt}`;
+      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, 512, 768);
 
       const newChar: CharacterProfile = {
         id: Date.now().toString(),
@@ -90,16 +101,16 @@ export default function Home() {
     }
   };
 
-  // 2. Generate New Pose Sprite
+  // 2. Generate New Pose Sprite via Local GPU
   const handleApplyPose = async () => {
     if (!activeCharacter) return;
     setLoading(true);
     try {
-      const fullPrompt = `1girl, visual novel character sprite, full body standing in ${
+      const fullPrompt = `full body standing in ${
         poseName || "standing pose"
-      }, masterwork anime artwork, clean white background, ${activeCharacter.identityPrompt}`;
+      }, ${activeCharacter.identityPrompt}`;
 
-      const imageUrl = await fetchPollinationsImage(fullPrompt, 512, 768);
+      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, 512, 768);
 
       const newPose = {
         id: Date.now().toString(),
@@ -121,7 +132,7 @@ export default function Home() {
     }
   };
 
-  // 3. Generate Expression Variant
+  // 3. Generate Expression Variant via Local GPU
   const handleApplyExpression = async (poseId: string) => {
     if (!activeCharacter) return;
     const targetPose = activeCharacter.poses.find((p) => p.id === poseId);
@@ -129,9 +140,9 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const fullPrompt = `1girl, close-up face avatar, visual novel character sprite, ${expressionPrompt}, facial expression, masterwork anime artwork, clean white background, ${activeCharacter.identityPrompt}`;
+      const fullPrompt = `close-up face avatar, ${expressionPrompt}, facial expression, ${activeCharacter.identityPrompt}`;
 
-      const imageUrl = await fetchPollinationsImage(fullPrompt, 512, 512);
+      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, 512, 512);
 
       const newExpr = {
         id: Date.now().toString(),
@@ -167,39 +178,59 @@ export default function Home() {
       </h1>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Sidebar: Character Roster */}
-        <div className="bg-gray-900 p-6 rounded-xl border border-gray-800">
-          <h2 className="text-xl font-semibold mb-4">Character Roster</h2>
-          {characters.length === 0 ? (
-            <p className="text-gray-500 text-sm">No characters created yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {characters.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={() => setSelectedCharacterId(c.id)}
-                  className={`p-3 rounded-lg flex items-center gap-4 cursor-pointer border transition ${
-                    selectedCharacterId === c.id
-                      ? "border-blue-500 bg-blue-950/40"
-                      : "border-gray-800 bg-gray-800/50 hover:border-gray-700"
-                  }`}
-                >
-                  <img
-                    src={c.heroImageUrl}
-                    alt={c.name}
-                    className="w-12 h-12 rounded-full object-cover border border-gray-700"
-                  />
-                  <div>
-                    <p className="font-bold">{c.name}</p>
-                    <p className="text-xs text-gray-400">{c.poses.length} Poses</p>
+        {/* Sidebar: GPU Config & Character Roster */}
+        <div className="space-y-6">
+          {/* GPU Connection Settings */}
+          <div className="bg-gray-900 p-4 rounded-xl border border-gray-800">
+            <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wider">
+              Local GPU Backend URL
+            </label>
+            <input
+              type="text"
+              value={gpuUrl}
+              onChange={(e) => setGpuUrl(e.target.value)}
+              placeholder="http://127.0.0.1:7860 or https://xxxx.gradio.live"
+              className="w-full p-2 text-xs bg-gray-800 rounded border border-gray-700 text-blue-400 font-mono focus:outline-none focus:border-blue-500"
+            />
+            <p className="text-[10px] text-gray-500 mt-1">
+              For local testing use <code className="text-gray-400">http://127.0.0.1:7860</code>. For Netlify deployment paste your <code className="text-gray-400">https://</code> tunnel URL.
+            </p>
+          </div>
+
+          {/* Roster List */}
+          <div className="bg-gray-900 p-6 rounded-xl border border-gray-800">
+            <h2 className="text-xl font-semibold mb-4">Character Roster</h2>
+            {characters.length === 0 ? (
+              <p className="text-gray-500 text-sm">No characters created yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {characters.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => setSelectedCharacterId(c.id)}
+                    className={`p-3 rounded-lg flex items-center gap-4 cursor-pointer border transition ${
+                      selectedCharacterId === c.id
+                        ? "border-blue-500 bg-blue-950/40"
+                        : "border-gray-800 bg-gray-800/50 hover:border-gray-700"
+                    }`}
+                  >
+                    <img
+                      src={c.heroImageUrl}
+                      alt={c.name}
+                      className="w-12 h-12 rounded-full object-cover border border-gray-700"
+                    />
+                    <div>
+                      <p className="font-bold">{c.name}</p>
+                      <p className="text-xs text-gray-400">{c.poses.length} Poses</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Studio Controls */}
+        {/* Studio Main Workspace */}
         <div className="lg:col-span-2 space-y-6">
           {/* Navigation Tabs */}
           <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-800">
@@ -240,7 +271,9 @@ export default function Home() {
           {/* Panel 1: Create Character */}
           {activeTab === "create" && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
-              <h2 className="text-lg font-bold text-blue-400">Step 1: Create Hero Anchor</h2>
+              <h2 className="text-lg font-bold text-blue-400">
+                Step 1: Create Hero Anchor
+              </h2>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Character Name</label>
                 <input
@@ -248,7 +281,7 @@ export default function Home() {
                   value={charName}
                   onChange={(e) => setCharName(e.target.value)}
                   placeholder="e.g. Elena"
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
               <div>
@@ -259,7 +292,7 @@ export default function Home() {
                   value={identityPrompt}
                   onChange={(e) => setIdentityPrompt(e.target.value)}
                   rows={3}
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
               <button
@@ -267,7 +300,7 @@ export default function Home() {
                 disabled={loading || !charName}
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
-                {loading ? "Generating Identity Anchor..." : "Generate Character Anchor"}
+                {loading ? "Generating Identity Anchor on RTX 4060..." : "Generate Character Anchor"}
               </button>
             </div>
           )}
@@ -285,7 +318,7 @@ export default function Home() {
                   value={poseName}
                   onChange={(e) => setPoseName(e.target.value)}
                   placeholder="e.g. crossed arms, waving hello, sitting"
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
               <button
@@ -293,7 +326,7 @@ export default function Home() {
                 disabled={loading}
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
-                {loading ? "Generating Pose Sprite..." : "Generate Pose Sprite"}
+                {loading ? "Generating Pose Sprite on RTX 4060..." : "Generate Pose Sprite"}
               </button>
             </div>
           )}
@@ -310,7 +343,7 @@ export default function Home() {
                   type="text"
                   value={expressionPrompt}
                   onChange={(e) => setExpressionPrompt(e.target.value)}
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
 
