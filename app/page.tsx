@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CharacterProfile } from "@/types/character";
 
 // Helper function to send txt2img requests directly to your local SD WebUI Forge API
@@ -14,22 +14,24 @@ async function fetchLocalForgeSprite(
     throw new Error("Please enter a valid Local GPU Backend URL.");
   }
 
-  // Clean trailing slashes
   const baseUrl = gpuApiUrl.replace(/\/$/, "");
 
-const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    prompt: `masterpiece, visual novel anime character sprite, clean white background, ${prompt}`,
-    negative_prompt: "", // Leave blank for Z-Image Turbo
-    steps: 8,            // Fast 8-step generation
-    width: 512,
-    height: 768,
-    cfg_scale: 1.5,      // Keep low (1.0 to 2.0)
-    sampler_name: "Euler",
-  }),
-});
+  const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt: `photorealistic raw photo, realistic character portrait, highly detailed face and skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
+      negative_prompt:
+        "anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background",
+      steps: 10,
+      width: width,
+      height: height,
+      cfg_scale: 1.5,
+      sampler_name: "Euler",
+    }),
+  });
 
   if (!response.ok) {
     throw new Error(
@@ -49,30 +51,72 @@ const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
 
 export default function Home() {
   // Local GPU API Endpoint
-  const [gpuUrl, setGpuUrl] = useState("https://8f947edff54beb5a37.gradio.live");
+  const [gpuUrl, setGpuUrl] = useState("http://127.0.0.1:7860");
 
-  // Character Roster State
+  // Character Roster State & Persistence Flag
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
+  const [isMounted, setIsMounted] = useState(false);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<"create" | "pose" | "expression">("create");
 
-  // Form Inputs
+  // Create Form Inputs
   const [charName, setCharName] = useState("");
   const [identityPrompt, setIdentityPrompt] = useState(
-    "long silver hair, sharp red eyes, navy blazer"
+    "24 year old woman, wavy brown hair, hazel eyes, natural freckles, navy blazer"
   );
   const [poseName, setPoseName] = useState("crossed arms, confident stance");
-  const [expressionPrompt, setExpressionPrompt] = useState(
-    "happy smiling expression, blushing cheeks"
-  );
+  const [expressionPrompt, setExpressionPrompt] = useState("slight warm smile");
+
+  // Edit State
+  const [editingCharId, setEditingCharId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editIdentityPrompt, setEditIdentityPrompt] = useState("");
 
   const [loading, setLoading] = useState(false);
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // 1. Generate Character Hero Image via Local GPU
+  // -----------------------------------------------------------
+  // LocalStorage Persistence (Loads on mount, saves on change)
+  // -----------------------------------------------------------
+  useEffect(() => {
+    const savedCharacters = localStorage.getItem("vn_studio_characters");
+    if (savedCharacters) {
+      try {
+        const parsed = JSON.parse(savedCharacters);
+        setCharacters(parsed);
+        if (parsed.length > 0) {
+          setSelectedCharacterId(parsed[0].id);
+        }
+      } catch (e) {
+        console.error("Failed to load characters from localStorage", e);
+      }
+    }
+    const savedUrl = localStorage.getItem("vn_studio_gpu_url");
+    if (savedUrl) setGpuUrl(savedUrl);
+
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (isMounted) {
+      localStorage.setItem("vn_studio_characters", JSON.stringify(characters));
+    }
+  }, [characters, isMounted]);
+
+  useEffect(() => {
+    if (isMounted) {
+      localStorage.setItem("vn_studio_gpu_url", gpuUrl);
+    }
+  }, [gpuUrl, isMounted]);
+
+  // -----------------------------------------------------------
+  // Character CRUD Operations
+  // -----------------------------------------------------------
+
+  // 1. Create Character Hero Image
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
@@ -99,7 +143,44 @@ export default function Home() {
     }
   };
 
-  // 2. Generate New Pose Sprite via Local GPU
+  // 2. Start Editing Character Metadata
+  const handleStartEdit = (char: CharacterProfile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingCharId(char.id);
+    setEditName(char.name);
+    setEditIdentityPrompt(char.identityPrompt);
+  };
+
+  // 3. Save Edited Character Metadata
+  const handleSaveEdit = () => {
+    if (!editingCharId) return;
+    setCharacters((prev) =>
+      prev.map((c) =>
+        c.id === editingCharId
+          ? { ...c, name: editName, identityPrompt: editIdentityPrompt }
+          : c
+      )
+    );
+    setEditingCharId(null);
+  };
+
+  // 4. Delete Character
+  const handleDeleteCharacter = (charId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this character?")) return;
+
+    setCharacters((prev) => prev.filter((c) => c.id !== charId));
+    if (selectedCharacterId === charId) {
+      const remaining = characters.filter((c) => c.id !== charId);
+      setSelectedCharacterId(remaining.length > 0 ? remaining[0].id : null);
+    }
+  };
+
+  // -----------------------------------------------------------
+  // Sprite Generation Operations
+  // -----------------------------------------------------------
+
+  // Generate New Pose Sprite
   const handleApplyPose = async () => {
     if (!activeCharacter) return;
     setLoading(true);
@@ -130,12 +211,9 @@ export default function Home() {
     }
   };
 
-  // 3. Generate Expression Variant via Local GPU
+  // Generate Expression Variant
   const handleApplyExpression = async (poseId: string) => {
     if (!activeCharacter) return;
-    const targetPose = activeCharacter.poses.find((p) => p.id === poseId);
-    if (!targetPose) return;
-
     setLoading(true);
     try {
       const fullPrompt = `close-up face avatar, ${expressionPrompt}, facial expression, ${activeCharacter.identityPrompt}`;
@@ -169,6 +247,8 @@ export default function Home() {
     }
   };
 
+  if (!isMounted) return null; // Avoid hydration mismatch on initial load
+
   return (
     <main className="min-h-screen bg-gray-950 text-white p-8">
       <h1 className="text-3xl font-bold mb-8 text-center">
@@ -187,12 +267,9 @@ export default function Home() {
               type="text"
               value={gpuUrl}
               onChange={(e) => setGpuUrl(e.target.value)}
-              placeholder="http://127.0.0.1:7860 or https://xxxx.gradio.live"
+              placeholder="http://127.0.0.1:7860"
               className="w-full p-2 text-xs bg-gray-800 rounded border border-gray-700 text-blue-400 font-mono focus:outline-none focus:border-blue-500"
             />
-            <p className="text-[10px] text-gray-500 mt-1">
-              For local testing use <code className="text-gray-400">http://127.0.0.1:7860</code>. For Netlify deployment paste your <code className="text-gray-400">https://</code> tunnel URL.
-            </p>
           </div>
 
           {/* Roster List */}
@@ -206,20 +283,40 @@ export default function Home() {
                   <div
                     key={c.id}
                     onClick={() => setSelectedCharacterId(c.id)}
-                    className={`p-3 rounded-lg flex items-center gap-4 cursor-pointer border transition ${
+                    className={`p-3 rounded-lg flex items-center justify-between cursor-pointer border transition ${
                       selectedCharacterId === c.id
                         ? "border-blue-500 bg-blue-950/40"
                         : "border-gray-800 bg-gray-800/50 hover:border-gray-700"
                     }`}
                   >
-                    <img
-                      src={c.heroImageUrl}
-                      alt={c.name}
-                      className="w-12 h-12 rounded-full object-cover border border-gray-700"
-                    />
-                    <div>
-                      <p className="font-bold">{c.name}</p>
-                      <p className="text-xs text-gray-400">{c.poses.length} Poses</p>
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <img
+                        src={c.heroImageUrl}
+                        alt={c.name}
+                        className="w-12 h-12 rounded-full object-cover border border-gray-700 flex-shrink-0"
+                      />
+                      <div className="truncate">
+                        <p className="font-bold truncate">{c.name}</p>
+                        <p className="text-xs text-gray-400">{c.poses.length} Poses</p>
+                      </div>
+                    </div>
+
+                    {/* Actions: Edit & Delete */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={(e) => handleStartEdit(c, e)}
+                        title="Edit Character"
+                        className="p-1.5 text-xs text-gray-400 hover:text-blue-400 rounded transition"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteCharacter(c.id, e)}
+                        title="Delete Character"
+                        className="p-1.5 text-xs text-gray-400 hover:text-red-400 rounded transition"
+                      >
+                        🗑️
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -266,6 +363,47 @@ export default function Home() {
             </button>
           </div>
 
+          {/* Edit Modal / Inline Panel */}
+          {editingCharId && (
+            <div className="bg-blue-950/40 p-6 rounded-xl border border-blue-500 space-y-4">
+              <h2 className="text-lg font-bold text-blue-400">Edit Character Profile</h2>
+              <div>
+                <label className="block text-sm text-gray-300 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-300 mb-1">
+                  Identity Prompt
+                </label>
+                <textarea
+                  value={editIdentityPrompt}
+                  onChange={(e) => setEditIdentityPrompt(e.target.value)}
+                  rows={3}
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveEdit}
+                  className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold"
+                >
+                  Save Changes
+                </button>
+                <button
+                  onClick={() => setEditingCharId(null)}
+                  className="px-4 bg-gray-800 hover:bg-gray-700 py-2 rounded text-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Panel 1: Create Character */}
           {activeTab === "create" && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
@@ -279,7 +417,7 @@ export default function Home() {
                   value={charName}
                   onChange={(e) => setCharName(e.target.value)}
                   placeholder="e.g. Elena"
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
               <div>
@@ -290,7 +428,7 @@ export default function Home() {
                   value={identityPrompt}
                   onChange={(e) => setIdentityPrompt(e.target.value)}
                   rows={3}
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
               <button
@@ -298,7 +436,7 @@ export default function Home() {
                 disabled={loading || !charName}
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
-                {loading ? "Generating Identity Anchor on RTX 4060..." : "Generate Character Anchor"}
+                {loading ? "Generating Character..." : "Generate Character Anchor"}
               </button>
             </div>
           )}
@@ -315,8 +453,8 @@ export default function Home() {
                   type="text"
                   value={poseName}
                   onChange={(e) => setPoseName(e.target.value)}
-                  placeholder="e.g. crossed arms, waving hello, sitting"
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
+                  placeholder="e.g. crossed arms, waving hello"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
               <button
@@ -324,7 +462,7 @@ export default function Home() {
                 disabled={loading}
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
-                {loading ? "Generating Pose Sprite on RTX 4060..." : "Generate Pose Sprite"}
+                {loading ? "Generating Pose Sprite..." : "Generate Pose Sprite"}
               </button>
             </div>
           )}
@@ -341,7 +479,7 @@ export default function Home() {
                   type="text"
                   value={expressionPrompt}
                   onChange={(e) => setExpressionPrompt(e.target.value)}
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white focus:outline-none focus:border-blue-500"
+                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
 
