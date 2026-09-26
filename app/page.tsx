@@ -17,21 +17,19 @@ async function fetchLocalForgeSprite(
   // Clean trailing slashes
   const baseUrl = gpuApiUrl.replace(/\/$/, "");
 
-  const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      prompt: `masterpiece, best quality, 1girl, visual novel character sprite, anime style, clean white background, ${prompt}`,
-      negative_prompt: "low quality, worst quality, bad anatomy, distorted, ugly, dark background",
-      steps: 20,
-      width: width,
-      height: height,
-      cfg_scale: 7,
-      sampler_name: "Euler a",
-    }),
-  });
+const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    prompt: `masterpiece, visual novel anime character sprite, clean white background, ${prompt}`,
+    negative_prompt: "", // Leave blank for Z-Image Turbo
+    steps: 8,            // Fast 8-step generation
+    width: 512,
+    height: 768,
+    cfg_scale: 1.5,      // Keep low (1.0 to 2.0)
+    sampler_name: "Euler",
+  }),
+});
 
   if (!response.ok) {
     throw new Error(
@@ -51,7 +49,7 @@ async function fetchLocalForgeSprite(
 
 export default function Home() {
   // Local GPU API Endpoint
-  const [gpuUrl, setGpuUrl] = useState("https://0d9ea4f5010b64eb50.gradio.live");
+  const [gpuUrl, setGpuUrl] = useState("https://8f947edff54beb5a37.gradio.live");
 
   // Character Roster State
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
