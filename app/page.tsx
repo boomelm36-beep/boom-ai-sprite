@@ -3,11 +3,19 @@
 import { useState, useEffect } from "react";
 import { CharacterProfile } from "@/types/character";
 
-// 1. Text-to-Image Helper (Step 1 & Step 2 - with ReActor Face Swap)
+// Negative prompt presets by gender
+const MALE_NEGATIVE_PRESET =
+  "vagina, vulva, breasts, boobs, female, woman, girl, futanari, anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background";
+
+const FEMALE_NEGATIVE_PRESET =
+  "penis, cock, male, man, boy, beard, mustache, facial hair, chest hair, anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background";
+
+// 1. Text-to-Image Helper (Step 1 & Step 2 - with ReActor Face Swap & Dynamic Negative Prompt)
 async function fetchLocalForgeSprite(
   gpuApiUrl: string,
   prompt: string,
-  referenceHeroImage?: string, // Hero Anchor base64 image for ReActor consistency
+  customNegativePrompt: string, // Passed dynamically from user input
+  referenceHeroImage?: string,
   width = 512,
   height = 768
 ): Promise<string> {
@@ -19,8 +27,7 @@ async function fetchLocalForgeSprite(
 
   const bodyPayload: any = {
     prompt: `photorealistic raw photo, realistic character portrait, highly detailed skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
-    negative_prompt:
-      "anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background",
+    negative_prompt: customNegativePrompt,
     steps: 10,
     width: width,
     height: height,
@@ -81,14 +88,15 @@ async function fetchLocalForgeSprite(
   return `data:image/png;base64,${base64Image}`;
 }
 
-// 2. Image-to-Image Helper (Step 3 - Face Expressions matching 512x768 aspect ratio)
+// 2. Image-to-Image Helper (Step 3 - Face Expressions with Dynamic Negative Prompt)
 async function fetchLocalForgeImg2Img(
   gpuApiUrl: string,
   outfitSpriteBase64: string,
   expressionPrompt: string,
   identityPrompt: string,
+  customNegativePrompt: string, // Passed dynamically from user input
   width = 512,
-  height = 768 // Matched to original 512x768 sprite dimensions to prevent squashing
+  height = 768
 ): Promise<string> {
   if (!gpuApiUrl) {
     throw new Error("Please enter a valid Local GPU Backend URL.");
@@ -109,9 +117,8 @@ async function fetchLocalForgeImg2Img(
     body: JSON.stringify({
       init_images: [cleanBase64Sprite],
       prompt: `facial expression ${expressionPrompt}, ${identityPrompt}, photorealistic raw photo, 8k resolution`,
-      negative_prompt:
-        "low quality, bad anatomy, distorted face, cartoon, anime, illustration",
-      denoising_strength: 0.35, // Modifies facial expression while preserving body & outfit
+      negative_prompt: customNegativePrompt,
+      denoising_strength: 0.35,
       steps: 12,
       width: width,
       height: height,
@@ -144,11 +151,16 @@ export default function Home() {
 
   const [activeTab, setActiveTab] = useState<"create" | "outfit" | "expression">("create");
 
-  // Input states
+  // Gender Preset State
+  const [selectedGender, setSelectedGender] = useState<"female" | "male">("female");
+
+  // Form Inputs
   const [charName, setCharName] = useState("");
   const [identityPrompt, setIdentityPrompt] = useState(
     "24 year old woman, wavy brown hair, hazel eyes, natural freckles"
   );
+  const [negativePrompt, setNegativePrompt] = useState(FEMALE_NEGATIVE_PRESET);
+
   const [outfitName, setOutfitName] = useState("tailored charcoal blazer, unbuttoned white dress shirt, fitted dark slacks");
   const [expressionPrompt, setExpressionPrompt] = useState("confident smirk");
 
@@ -161,9 +173,19 @@ export default function Home() {
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // -----------------------------------------------------------
+  // Switch negative prompt preset when changing gender selector
+  const handleGenderChange = (gender: "female" | "male") => {
+    setSelectedGender(gender);
+    if (gender === "male") {
+      setNegativePrompt(MALE_NEGATIVE_PRESET);
+      setIdentityPrompt("26 year old man, handsome masculine features, short dark hair, sharp jawline");
+    } else {
+      setNegativePrompt(FEMALE_NEGATIVE_PRESET);
+      setIdentityPrompt("24 year old woman, wavy brown hair, hazel eyes, natural freckles");
+    }
+  };
+
   // LocalStorage Persistence
-  // -----------------------------------------------------------
   useEffect(() => {
     const savedCharacters = localStorage.getItem("vn_studio_characters");
     if (savedCharacters) {
@@ -193,17 +215,20 @@ export default function Home() {
     }
   }, [gpuUrl, isMounted]);
 
-  // -----------------------------------------------------------
-  // Character & Studio Actions
-  // -----------------------------------------------------------
-
   // Step 1: Create Character Anchor
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
     try {
       const fullPrompt = `front view portrait, default clothing, ${identityPrompt}`;
-      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, undefined, 512, 768);
+      const imageUrl = await fetchLocalForgeSprite(
+        gpuUrl,
+        fullPrompt,
+        negativePrompt, // Dynamic user negative prompt
+        undefined,
+        512,
+        768
+      );
 
       const newChar: CharacterProfile = {
         id: Date.now().toString(),
@@ -224,7 +249,7 @@ export default function Home() {
     }
   };
 
-  // Step 2: Generate Outfit Sprite (with ReActor Face Swap)
+  // Step 2: Generate Outfit Sprite
   const handleApplyOutfit = async () => {
     if (!activeCharacter) return;
     setLoading(true);
@@ -236,6 +261,7 @@ export default function Home() {
       const imageUrl = await fetchLocalForgeSprite(
         gpuUrl,
         fullPrompt,
+        negativePrompt, // Dynamic user negative prompt
         activeCharacter.heroImageUrl,
         512,
         768
@@ -261,7 +287,7 @@ export default function Home() {
     }
   };
 
-  // Step 3: Expression Variant via Img2Img (Preserves 512x768 Scale)
+  // Step 3: Expression Variant via Img2Img
   const handleApplyExpression = async (outfitId: string) => {
     if (!activeCharacter) return;
     const targetOutfit = activeCharacter.poses.find((p) => p.id === outfitId);
@@ -274,8 +300,9 @@ export default function Home() {
         targetOutfit.spriteUrl,
         expressionPrompt,
         activeCharacter.identityPrompt,
+        negativePrompt, // Dynamic user negative prompt
         512,
-        768 // Maintains exact aspect ratio matching original outfit sprite
+        768
       );
 
       const newExpr = {
@@ -346,7 +373,7 @@ export default function Home() {
       </h1>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Sidebar: Config & Roster */}
+        {/* Sidebar */}
         <div className="space-y-6">
           <div className="bg-gray-900 p-4 rounded-xl border border-gray-800">
             <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wider">
@@ -412,7 +439,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Studio Main Workspace */}
+        {/* Workspace */}
         <div className="lg:col-span-2 space-y-6">
           {/* Tabs */}
           <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-800">
@@ -497,16 +524,47 @@ export default function Home() {
               <h2 className="text-lg font-bold text-blue-400">
                 Step 1: Create Face & Identity Anchor
               </h2>
+
+              {/* Gender Preset Selector */}
+              <div>
+                <label className="block text-sm text-gray-300 mb-2">Character Gender</label>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleGenderChange("female")}
+                    className={`flex-1 py-2 rounded-lg font-semibold border transition ${
+                      selectedGender === "female"
+                        ? "bg-pink-600/30 border-pink-500 text-pink-200"
+                        : "bg-gray-800 border-gray-700 text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    👩 Female Character
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleGenderChange("male")}
+                    className={`flex-1 py-2 rounded-lg font-semibold border transition ${
+                      selectedGender === "male"
+                        ? "bg-blue-600/30 border-blue-500 text-blue-200"
+                        : "bg-gray-800 border-gray-700 text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    👨 Male Character
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Character Name</label>
                 <input
                   type="text"
                   value={charName}
                   onChange={(e) => setCharName(e.target.value)}
-                  placeholder="e.g. Alex"
+                  placeholder={selectedGender === "male" ? "e.g. Alex" : "e.g. Elena"}
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
+
               <div>
                 <label className="block text-sm text-gray-300 mb-1">
                   Identity Prompt (Face Features, Hair & Eyes)
@@ -514,10 +572,24 @@ export default function Home() {
                 <textarea
                   value={identityPrompt}
                   onChange={(e) => setIdentityPrompt(e.target.value)}
-                  rows={3}
+                  rows={2}
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
+
+              {/* Custom Negative Prompt Field */}
+              <div>
+                <label className="block text-sm text-red-400 font-semibold mb-1">
+                  Negative Prompt (Things to Block)
+                </label>
+                <textarea
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  rows={3}
+                  className="w-full p-2 bg-gray-800 rounded border border-red-900/50 text-gray-300 text-xs font-mono"
+                />
+              </div>
+
               <button
                 onClick={handleCreateCharacter}
                 disabled={loading || !charName}
@@ -546,6 +618,20 @@ export default function Home() {
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
+
+              {/* Editable Negative Prompt for Outfit Generation */}
+              <div>
+                <label className="block text-sm text-red-400 font-semibold mb-1">
+                  Negative Prompt
+                </label>
+                <textarea
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  rows={2}
+                  className="w-full p-2 bg-gray-800 rounded border border-red-900/50 text-gray-300 text-xs font-mono"
+                />
+              </div>
+
               <button
                 onClick={handleApplyOutfit}
                 disabled={loading}
@@ -562,15 +648,30 @@ export default function Home() {
               <h2 className="text-lg font-bold text-blue-400">
                 Step 3: Expressions for {activeCharacter.name}
               </h2>
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Target Expression</label>
-                <input
-                  type="text"
-                  value={expressionPrompt}
-                  onChange={(e) => setExpressionPrompt(e.target.value)}
-                  placeholder="e.g. confident smirk, warm smile, angry frown"
-                  className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
-                />
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1">Target Expression</label>
+                  <input
+                    type="text"
+                    value={expressionPrompt}
+                    onChange={(e) => setExpressionPrompt(e.target.value)}
+                    placeholder="e.g. confident smirk, warm smile, angry frown"
+                    className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
+                  />
+                </div>
+
+                {/* Editable Negative Prompt for Expression Generation */}
+                <div>
+                  <label className="block text-sm text-red-400 font-semibold mb-1">
+                    Negative Prompt
+                  </label>
+                  <textarea
+                    value={negativePrompt}
+                    onChange={(e) => setNegativePrompt(e.target.value)}
+                    rows={2}
+                    className="w-full p-2 bg-gray-800 rounded border border-red-900/50 text-gray-300 text-xs font-mono"
+                  />
+                </div>
               </div>
 
               <div className="space-y-6">
