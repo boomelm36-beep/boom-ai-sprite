@@ -3,11 +3,11 @@
 import { useState, useEffect } from "react";
 import { CharacterProfile } from "@/types/character";
 
-// 1. Text-to-Image Helper (with ReActor Face Swap support)
+// 1. Text-to-Image Helper (with ReActor Face Swap for Outfit Generation)
 async function fetchLocalForgeSprite(
   gpuApiUrl: string,
   prompt: string,
-  referenceHeroImage?: string,
+  referenceHeroImage?: string, // Passes the face anchor to preserve identity across outfits
   width = 512,
   height = 768
 ): Promise<string> {
@@ -15,12 +15,10 @@ async function fetchLocalForgeSprite(
     throw new Error("Please enter a valid Local GPU Backend URL.");
   }
 
-  // Format base URL (remove trailing slashes)
   const baseUrl = gpuApiUrl.trim().replace(/\/+$/, "");
 
-  // Standard txt2img body payload
   const bodyPayload: any = {
-    prompt: `photorealistic raw photo, realistic character portrait, highly detailed face and skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
+    prompt: `photorealistic raw photo, realistic character portrait, highly detailed skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
     negative_prompt:
       "anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background",
     steps: 10,
@@ -30,7 +28,7 @@ async function fetchLocalForgeSprite(
     sampler_name: "Euler",
   };
 
-  // Enable ReActor Face Swap if a reference Hero Anchor image exists
+  // ReActor Face Swap: Locks the character's face onto the new outfit sprite
   if (referenceHeroImage && referenceHeroImage.startsWith("data:image")) {
     const cleanBase64HeroAnchor = referenceHeroImage.replace(
       /^data:image\/\w+;base64,/,
@@ -40,13 +38,13 @@ async function fetchLocalForgeSprite(
     bodyPayload.alwayson_scripts = {
       reactor: {
         args: [
-          cleanBase64HeroAnchor, // 0: Source image (base64)
+          cleanBase64HeroAnchor, // 0: Source face image
           true,                  // 1: Enable ReActor
-          "0",                   // 2: Source faces index
-          "0",                   // 3: Target faces index
-          "inswapper_128.onnx",   // 4: Model
-          "CodeFormer",          // 5: Restore face model
-          1,                     // 6: Restore face visibility
+          "0",                   // 2: Source face index
+          "0",                   // 3: Target face index
+          "inswapper_128.onnx",   // 4: Model name
+          "CodeFormer",          // 5: Face restoration model
+          1,                     // 6: Restoration visibility
           true,                  // 7: Restore face first
           "CUDA",                // 8: Execution provider
           0,                     // 9: Weight
@@ -60,18 +58,16 @@ async function fetchLocalForgeSprite(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify(bodyPayload),
   });
 
   if (!response.ok) {
-    // Parse FastAPI detail error object to see exact 422 failure reason
     const errorJson = await response.json().catch(() => null);
-    console.error("FastAPI 422 Error Payload Details:", errorJson);
-
+    console.error("Forge API Error Details:", errorJson);
     throw new Error(
-      `GPU Server returned status ${response.status}. Check F12 Console for field error details.`
+      `GPU Server Error (${response.status}). Check browser F12 console for details.`
     );
   }
 
@@ -85,10 +81,10 @@ async function fetchLocalForgeSprite(
   return `data:image/png;base64,${base64Image}`;
 }
 
-// 2. Image-to-Image Helper (For changing facial expressions without destroying the pose)
+// 2. Image-to-Image Helper (For facial expressions on specific outfits)
 async function fetchLocalForgeImg2Img(
   gpuApiUrl: string,
-  poseSpriteBase64: string,
+  outfitSpriteBase64: string,
   expressionPrompt: string,
   identityPrompt: string,
   width = 512,
@@ -98,21 +94,24 @@ async function fetchLocalForgeImg2Img(
     throw new Error("Please enter a valid Local GPU Backend URL.");
   }
 
-  const baseUrl = gpuApiUrl.replace(/\/$/, "");
-  const cleanBase64PoseSprite = poseSpriteBase64.replace(
+  const baseUrl = gpuApiUrl.trim().replace(/\/+$/, "");
+  const cleanBase64Sprite = outfitSpriteBase64.replace(
     /^data:image\/\w+;base64,/,
     ""
   );
 
   const response = await fetch(`${baseUrl}/sdapi/v1/img2img`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
     body: JSON.stringify({
-      init_images: [cleanBase64PoseSprite],
+      init_images: [cleanBase64Sprite],
       prompt: `close-up face avatar, ${expressionPrompt}, facial expression, ${identityPrompt}, photorealistic raw photo, 8k resolution`,
       negative_prompt:
         "low quality, bad anatomy, distorted face, cartoon, anime, illustration",
-      denoising_strength: 0.35, // Keeps 65% of the original pose image intact
+      denoising_strength: 0.35, // Modifies facial expression while keeping outfit 65% intact
       steps: 12,
       width: width,
       height: height,
@@ -122,14 +121,14 @@ async function fetchLocalForgeImg2Img(
   });
 
   if (!response.ok) {
-    throw new Error("Failed to connect to GPU server for img2img expression.");
+    throw new Error("Failed to connect to GPU server for expression generation.");
   }
 
   const data = await response.json();
   const base64Image = data.images?.[0];
 
   if (!base64Image) {
-    throw new Error("No expression image data returned from WebUI Forge.");
+    throw new Error("No expression image returned from WebUI Forge.");
   }
 
   return `data:image/png;base64,${base64Image}`;
@@ -141,17 +140,17 @@ export default function Home() {
   const [isMounted, setIsMounted] = useState(false);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"create" | "pose" | "expression">("create");
+  const [activeTab, setActiveTab] = useState<"create" | "outfit" | "expression">("create");
 
-  // Input states
+  // Form Inputs
   const [charName, setCharName] = useState("");
   const [identityPrompt, setIdentityPrompt] = useState(
-    "24 year old woman, wavy brown hair, hazel eyes, natural freckles, navy blazer"
+    "24 year old woman, wavy brown hair, hazel eyes, natural freckles"
   );
-  const [poseName, setPoseName] = useState("crossed arms, confident stance");
+  const [outfitName, setOutfitName] = useState("black leather jacket, dark jeans, casual style");
   const [expressionPrompt, setExpressionPrompt] = useState("slight warm smile");
 
-  // Edit state
+  // Edit State
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editIdentityPrompt, setEditIdentityPrompt] = useState("");
@@ -190,12 +189,12 @@ export default function Home() {
     }
   }, [gpuUrl, isMounted]);
 
-  // Actions
+  // Step 1: Create Character Anchor
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
     try {
-      const fullPrompt = `front view portrait, ${identityPrompt}`;
+      const fullPrompt = `front view portrait, default clothing, ${identityPrompt}`;
       const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, undefined, 512, 768);
 
       const newChar: CharacterProfile = {
@@ -208,7 +207,7 @@ export default function Home() {
 
       setCharacters((prev) => [...prev, newChar]);
       setSelectedCharacterId(newChar.id);
-      setActiveTab("pose");
+      setActiveTab("outfit");
       setCharName("");
     } catch (err: any) {
       alert(err?.message || "Failed to generate character.");
@@ -217,15 +216,16 @@ export default function Home() {
     }
   };
 
-  const handleApplyPose = async () => {
+  // Step 2: Add New Outfit Variation
+  const handleApplyOutfit = async () => {
     if (!activeCharacter) return;
     setLoading(true);
     try {
-      const fullPrompt = `full body standing in ${
-        poseName || "standing pose"
+      const fullPrompt = `full body standing pose, wearing ${
+        outfitName || "casual clothes"
       }, ${activeCharacter.identityPrompt}`;
 
-      // Pass activeCharacter.heroImageUrl so ReActor locks the facial structure
+      // Pass activeCharacter.heroImageUrl so ReActor swaps the face onto the new outfit
       const imageUrl = await fetchLocalForgeSprite(
         gpuUrl,
         fullPrompt,
@@ -234,37 +234,37 @@ export default function Home() {
         768
       );
 
-      const newPose = {
+      const newOutfit = {
         id: Date.now().toString(),
-        poseName,
+        poseName: outfitName, // Stored under poseName for component compatibility
         spriteUrl: imageUrl,
         expressions: [],
       };
 
       setCharacters((prev) =>
         prev.map((c) =>
-          c.id === activeCharacter.id ? { ...c, poses: [...c.poses, newPose] } : c
+          c.id === activeCharacter.id ? { ...c, poses: [...c.poses, newOutfit] } : c
         )
       );
       setActiveTab("expression");
     } catch (err: any) {
-      alert(err?.message || "Failed to generate pose sprite.");
+      alert(err?.message || "Failed to generate outfit sprite.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleApplyExpression = async (poseId: string) => {
+  // Step 3: Expression on Selected Outfit
+  const handleApplyExpression = async (outfitId: string) => {
     if (!activeCharacter) return;
-    const targetPose = activeCharacter.poses.find((p) => p.id === poseId);
-    if (!targetPose) return;
+    const targetOutfit = activeCharacter.poses.find((p) => p.id === outfitId);
+    if (!targetOutfit) return;
 
     setLoading(true);
     try {
-      // Pass pose sprite into img2img to modify only facial features
       const imageUrl = await fetchLocalForgeImg2Img(
         gpuUrl,
-        targetPose.spriteUrl,
+        targetOutfit.spriteUrl,
         expressionPrompt,
         activeCharacter.identityPrompt,
         512,
@@ -283,7 +283,7 @@ export default function Home() {
             ? {
                 ...c,
                 poses: c.poses.map((p) =>
-                  p.id === poseId
+                  p.id === outfitId
                     ? { ...p, expressions: [...p.expressions, newExpr] }
                     : p
                 ),
@@ -319,7 +319,7 @@ export default function Home() {
 
   const handleDeleteCharacter = (charId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Delete this character?")) return;
+    if (!confirm("Delete this character profile?")) return;
 
     setCharacters((prev) => prev.filter((c) => c.id !== charId));
     if (selectedCharacterId === charId) {
@@ -376,7 +376,7 @@ export default function Home() {
                       />
                       <div className="truncate">
                         <p className="font-bold truncate">{c.name}</p>
-                        <p className="text-xs text-gray-400">{c.poses.length} Poses</p>
+                        <p className="text-xs text-gray-400">{c.poses.length} Outfits</p>
                       </div>
                     </div>
 
@@ -417,15 +417,15 @@ export default function Home() {
               1. New Character
             </button>
             <button
-              onClick={() => setActiveTab("pose")}
+              onClick={() => setActiveTab("outfit")}
               disabled={!activeCharacter}
               className={`flex-1 py-2 text-sm font-semibold rounded-md transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed ${
-                activeTab === "pose"
+                activeTab === "outfit"
                   ? "bg-blue-600 text-white"
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              2. Add Pose
+              2. Add Outfit
             </button>
             <button
               onClick={() => setActiveTab("expression")}
@@ -480,10 +480,11 @@ export default function Home() {
             </div>
           )}
 
+          {/* Step 1: Character Creation */}
           {activeTab === "create" && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">
-                Step 1: Create Hero Anchor
+                Step 1: Create Face & Identity Anchor
               </h2>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Character Name</label>
@@ -497,7 +498,7 @@ export default function Home() {
               </div>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">
-                  Identity Prompt (Features & Clothing)
+                  Identity Prompt (Face Features, Hair & Eyes)
                 </label>
                 <textarea
                   value={identityPrompt}
@@ -516,31 +517,35 @@ export default function Home() {
             </div>
           )}
 
-          {activeTab === "pose" && activeCharacter && (
+          {/* Step 2: Outfit Studio */}
+          {activeTab === "outfit" && activeCharacter && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">
-                Step 2: Pose Studio ({activeCharacter.name})
+                Step 2: Outfit Studio ({activeCharacter.name})
               </h2>
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Pose Description</label>
+                <label className="block text-sm text-gray-300 mb-1">
+                  Outfit Description & Clothing Style
+                </label>
                 <input
                   type="text"
-                  value={poseName}
-                  onChange={(e) => setPoseName(e.target.value)}
-                  placeholder="e.g. crossed arms, waving hello"
+                  value={outfitName}
+                  onChange={(e) => setOutfitName(e.target.value)}
+                  placeholder="e.g. red evening dress, police uniform, summer swimsuit"
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
               <button
-                onClick={handleApplyPose}
+                onClick={handleApplyOutfit}
                 disabled={loading}
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 py-3 rounded-lg font-bold transition cursor-pointer disabled:cursor-not-allowed"
               >
-                {loading ? "Generating Pose Sprite..." : "Generate Pose Sprite"}
+                {loading ? "Generating Outfit Sprite..." : "Generate Outfit Sprite"}
               </button>
             </div>
           )}
 
+          {/* Step 3: Expression Studio */}
           {activeTab === "expression" && activeCharacter && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-6">
               <h2 className="text-lg font-bold text-blue-400">
@@ -552,22 +557,23 @@ export default function Home() {
                   type="text"
                   value={expressionPrompt}
                   onChange={(e) => setExpressionPrompt(e.target.value)}
+                  placeholder="e.g. angry frown, laughing, surprised"
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
 
               <div className="space-y-6">
-                {activeCharacter.poses.map((pose) => (
+                {activeCharacter.poses.map((outfit) => (
                   <div
-                    key={pose.id}
+                    key={outfit.id}
                     className="p-4 bg-gray-800/60 rounded-lg border border-gray-700"
                   >
                     <div className="flex justify-between items-center mb-3">
                       <h3 className="font-semibold text-blue-300">
-                        Pose: {pose.poseName}
+                        Outfit: {outfit.poseName}
                       </h3>
                       <button
-                        onClick={() => handleApplyExpression(pose.id)}
+                        onClick={() => handleApplyExpression(outfit.id)}
                         disabled={loading}
                         className="bg-blue-600 hover:bg-blue-500 text-xs px-3 py-1.5 rounded font-bold transition cursor-pointer disabled:cursor-not-allowed"
                       >
@@ -577,13 +583,13 @@ export default function Home() {
                     <div className="flex gap-4 overflow-x-auto pb-2">
                       <div className="flex-shrink-0 text-center">
                         <img
-                          src={pose.spriteUrl}
-                          alt="Base Pose"
+                          src={outfit.spriteUrl}
+                          alt="Base Outfit"
                           className="w-28 h-36 object-cover rounded border border-gray-600"
                         />
-                        <span className="text-xs text-gray-400 mt-1 block">Base Pose</span>
+                        <span className="text-xs text-gray-400 mt-1 block">Base Outfit</span>
                       </div>
-                      {pose.expressions.map((exp) => (
+                      {outfit.expressions.map((exp) => (
                         <div key={exp.id} className="flex-shrink-0 text-center">
                           <img
                             src={exp.imageUrl}
