@@ -7,7 +7,7 @@ import { CharacterProfile } from "@/types/character";
 async function fetchLocalForgeSprite(
   gpuApiUrl: string,
   prompt: string,
-  referenceHeroImage?: string, // Hero Anchor image base64 for ReActor consistency
+  referenceHeroImage?: string,
   width = 512,
   height = 768
 ): Promise<string> {
@@ -15,9 +15,10 @@ async function fetchLocalForgeSprite(
     throw new Error("Please enter a valid Local GPU Backend URL.");
   }
 
-  const baseUrl = gpuApiUrl.replace(/\/$/, "");
+  // Format base URL (remove trailing slashes)
+  const baseUrl = gpuApiUrl.trim().replace(/\/+$/, "");
 
-  // Base API Payload
+  // Standard txt2img body payload
   const bodyPayload: any = {
     prompt: `photorealistic raw photo, realistic character portrait, highly detailed face and skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
     negative_prompt:
@@ -29,8 +30,8 @@ async function fetchLocalForgeSprite(
     sampler_name: "Euler",
   };
 
-  // Enable ReActor Face Swap if a reference Hero Anchor image is provided
-  if (referenceHeroImage) {
+  // Enable ReActor Face Swap if a reference Hero Anchor image exists
+  if (referenceHeroImage && referenceHeroImage.startsWith("data:image")) {
     const cleanBase64HeroAnchor = referenceHeroImage.replace(
       /^data:image\/\w+;base64,/,
       ""
@@ -39,13 +40,13 @@ async function fetchLocalForgeSprite(
     bodyPayload.alwayson_scripts = {
       reactor: {
         args: [
-          cleanBase64HeroAnchor, // 0: Source face image
+          cleanBase64HeroAnchor, // 0: Source image (base64)
           true,                  // 1: Enable ReActor
-          "0",                   // 2: Source face index
-          "0",                   // 3: Target face index
-          "inswapper_128.onnx",   // 4: Model name
-          "CodeFormer",          // 5: Face restoration model
-          1,                     // 6: Restoration visibility
+          "0",                   // 2: Source faces index
+          "0",                   // 3: Target faces index
+          "inswapper_128.onnx",   // 4: Model
+          "CodeFormer",          // 5: Restore face model
+          1,                     // 6: Restore face visibility
           true,                  // 7: Restore face first
           "CUDA",                // 8: Execution provider
           0,                     // 9: Weight
@@ -57,12 +58,21 @@ async function fetchLocalForgeSprite(
 
   const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
     body: JSON.stringify(bodyPayload),
   });
 
   if (!response.ok) {
-    throw new Error("Failed to connect to GPU server. Check WebUI Forge status.");
+    // Parse FastAPI detail error object to see exact 422 failure reason
+    const errorJson = await response.json().catch(() => null);
+    console.error("FastAPI 422 Error Payload Details:", errorJson);
+
+    throw new Error(
+      `GPU Server returned status ${response.status}. Check F12 Console for field error details.`
+    );
   }
 
   const data = await response.json();
