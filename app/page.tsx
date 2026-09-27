@@ -44,17 +44,19 @@ async function fetchLocalForgeSprite(
     bodyPayload.alwayson_scripts = {
       reactor: {
         args: [
-          cleanBase64HeroAnchor, // 0: Source face image
+          cleanBase64HeroAnchor, // 0: Source image base64
           true,                  // 1: Enable ReActor
           "0",                   // 2: Source face index
           "0",                   // 3: Target face index
-          "inswapper_128.onnx",   // 4: Model name
-          "CodeFormer",          // 5: Face restoration model
-          1,                     // 6: Restoration visibility
+          "inswapper_128.onnx",   // 4: Face model name
+          "CodeFormer",          // 5: Face restoration model ("CodeFormer" or "None")
+          1,                     // 6: Face restoration visibility (0.0 - 1.0)
           true,                  // 7: Restore face first
-          "CUDA",                // 8: Execution provider
-          1,                     // 9: Weight (MUST BE 1, NOT 0)
-          false,                 // 10: Upscale
+          "None",                // 8: Upscaler name ("None")
+          1,                     // 9: Upscaler scale
+          1,                     // 10: Upscaler visibility
+          false,                 // 11: Swap in source image
+          true,                  // 12: Swap in generated image
         ],
       },
     };
