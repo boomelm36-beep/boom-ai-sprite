@@ -3,10 +3,11 @@
 import { useState, useEffect } from "react";
 import { CharacterProfile } from "@/types/character";
 
-// Helper function to send txt2img requests directly to your local SD WebUI Forge API
+// 1. Text-to-Image Helper (with ReActor Face Swap support)
 async function fetchLocalForgeSprite(
   gpuApiUrl: string,
   prompt: string,
+  referenceHeroImage?: string, // Hero Anchor image base64 for ReActor consistency
   width = 512,
   height = 768
 ): Promise<string> {
@@ -16,27 +17,52 @@ async function fetchLocalForgeSprite(
 
   const baseUrl = gpuApiUrl.replace(/\/$/, "");
 
+  // Base API Payload
+  const bodyPayload: any = {
+    prompt: `photorealistic raw photo, realistic character portrait, highly detailed face and skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
+    negative_prompt:
+      "anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background",
+    steps: 10,
+    width: width,
+    height: height,
+    cfg_scale: 1.5,
+    sampler_name: "Euler",
+  };
+
+  // Enable ReActor Face Swap if a reference Hero Anchor image is provided
+  if (referenceHeroImage) {
+    const cleanBase64HeroAnchor = referenceHeroImage.replace(
+      /^data:image\/\w+;base64,/,
+      ""
+    );
+
+    bodyPayload.alwayson_scripts = {
+      reactor: {
+        args: [
+          cleanBase64HeroAnchor, // 0: Source face image
+          true,                  // 1: Enable ReActor
+          "0",                   // 2: Source face index
+          "0",                   // 3: Target face index
+          "inswapper_128.onnx",   // 4: Model name
+          "CodeFormer",          // 5: Face restoration model
+          1,                     // 6: Restoration visibility
+          true,                  // 7: Restore face first
+          "CUDA",                // 8: Execution provider
+          0,                     // 9: Weight
+          false,                 // 10: Upscale
+        ],
+      },
+    };
+  }
+
   const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      prompt: `photorealistic raw photo, realistic character portrait, highly detailed face and skin texture, 8k resolution, studio lighting, clean solid white background, ${prompt}`,
-      negative_prompt:
-        "anime, cartoon, illustration, 3d render, painting, drawing, low quality, bad anatomy, distorted face, oversaturated, dark background",
-      steps: 10,
-      width: width,
-      height: height,
-      cfg_scale: 1.5,
-      sampler_name: "Euler",
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bodyPayload),
   });
 
   if (!response.ok) {
-    throw new Error(
-      "Failed to connect to GPU server. Check that WebUI Forge is running and your GPU URL is correct."
-    );
+    throw new Error("Failed to connect to GPU server. Check WebUI Forge status.");
   }
 
   const data = await response.json();
@@ -49,19 +75,65 @@ async function fetchLocalForgeSprite(
   return `data:image/png;base64,${base64Image}`;
 }
 
-export default function Home() {
-  // Local GPU API Endpoint
-  const [gpuUrl, setGpuUrl] = useState("http://127.0.0.1:7860");
+// 2. Image-to-Image Helper (For changing facial expressions without destroying the pose)
+async function fetchLocalForgeImg2Img(
+  gpuApiUrl: string,
+  poseSpriteBase64: string,
+  expressionPrompt: string,
+  identityPrompt: string,
+  width = 512,
+  height = 512
+): Promise<string> {
+  if (!gpuApiUrl) {
+    throw new Error("Please enter a valid Local GPU Backend URL.");
+  }
 
-  // Character Roster State & Persistence Flag
+  const baseUrl = gpuApiUrl.replace(/\/$/, "");
+  const cleanBase64PoseSprite = poseSpriteBase64.replace(
+    /^data:image\/\w+;base64,/,
+    ""
+  );
+
+  const response = await fetch(`${baseUrl}/sdapi/v1/img2img`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      init_images: [cleanBase64PoseSprite],
+      prompt: `close-up face avatar, ${expressionPrompt}, facial expression, ${identityPrompt}, photorealistic raw photo, 8k resolution`,
+      negative_prompt:
+        "low quality, bad anatomy, distorted face, cartoon, anime, illustration",
+      denoising_strength: 0.35, // Keeps 65% of the original pose image intact
+      steps: 12,
+      width: width,
+      height: height,
+      cfg_scale: 1.5,
+      sampler_name: "Euler",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to connect to GPU server for img2img expression.");
+  }
+
+  const data = await response.json();
+  const base64Image = data.images?.[0];
+
+  if (!base64Image) {
+    throw new Error("No expression image data returned from WebUI Forge.");
+  }
+
+  return `data:image/png;base64,${base64Image}`;
+}
+
+export default function Home() {
+  const [gpuUrl, setGpuUrl] = useState("http://127.0.0.1:7860");
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [isMounted, setIsMounted] = useState(false);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
-  // Active Tab
   const [activeTab, setActiveTab] = useState<"create" | "pose" | "expression">("create");
 
-  // Create Form Inputs
+  // Input states
   const [charName, setCharName] = useState("");
   const [identityPrompt, setIdentityPrompt] = useState(
     "24 year old woman, wavy brown hair, hazel eyes, natural freckles, navy blazer"
@@ -69,7 +141,7 @@ export default function Home() {
   const [poseName, setPoseName] = useState("crossed arms, confident stance");
   const [expressionPrompt, setExpressionPrompt] = useState("slight warm smile");
 
-  // Edit State
+  // Edit state
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editIdentityPrompt, setEditIdentityPrompt] = useState("");
@@ -78,20 +150,16 @@ export default function Home() {
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // -----------------------------------------------------------
-  // LocalStorage Persistence (Loads on mount, saves on change)
-  // -----------------------------------------------------------
+  // Persistence
   useEffect(() => {
     const savedCharacters = localStorage.getItem("vn_studio_characters");
     if (savedCharacters) {
       try {
         const parsed = JSON.parse(savedCharacters);
         setCharacters(parsed);
-        if (parsed.length > 0) {
-          setSelectedCharacterId(parsed[0].id);
-        }
+        if (parsed.length > 0) setSelectedCharacterId(parsed[0].id);
       } catch (e) {
-        console.error("Failed to load characters from localStorage", e);
+        console.error("Failed to load characters", e);
       }
     }
     const savedUrl = localStorage.getItem("vn_studio_gpu_url");
@@ -112,17 +180,13 @@ export default function Home() {
     }
   }, [gpuUrl, isMounted]);
 
-  // -----------------------------------------------------------
-  // Character CRUD Operations
-  // -----------------------------------------------------------
-
-  // 1. Create Character Hero Image
+  // Actions
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
     setLoading(true);
     try {
       const fullPrompt = `front view portrait, ${identityPrompt}`;
-      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, 512, 768);
+      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, undefined, 512, 768);
 
       const newChar: CharacterProfile = {
         id: Date.now().toString(),
@@ -143,44 +207,6 @@ export default function Home() {
     }
   };
 
-  // 2. Start Editing Character Metadata
-  const handleStartEdit = (char: CharacterProfile, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setEditingCharId(char.id);
-    setEditName(char.name);
-    setEditIdentityPrompt(char.identityPrompt);
-  };
-
-  // 3. Save Edited Character Metadata
-  const handleSaveEdit = () => {
-    if (!editingCharId) return;
-    setCharacters((prev) =>
-      prev.map((c) =>
-        c.id === editingCharId
-          ? { ...c, name: editName, identityPrompt: editIdentityPrompt }
-          : c
-      )
-    );
-    setEditingCharId(null);
-  };
-
-  // 4. Delete Character
-  const handleDeleteCharacter = (charId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this character?")) return;
-
-    setCharacters((prev) => prev.filter((c) => c.id !== charId));
-    if (selectedCharacterId === charId) {
-      const remaining = characters.filter((c) => c.id !== charId);
-      setSelectedCharacterId(remaining.length > 0 ? remaining[0].id : null);
-    }
-  };
-
-  // -----------------------------------------------------------
-  // Sprite Generation Operations
-  // -----------------------------------------------------------
-
-  // Generate New Pose Sprite
   const handleApplyPose = async () => {
     if (!activeCharacter) return;
     setLoading(true);
@@ -189,7 +215,14 @@ export default function Home() {
         poseName || "standing pose"
       }, ${activeCharacter.identityPrompt}`;
 
-      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, 512, 768);
+      // Pass activeCharacter.heroImageUrl so ReActor locks the facial structure
+      const imageUrl = await fetchLocalForgeSprite(
+        gpuUrl,
+        fullPrompt,
+        activeCharacter.heroImageUrl,
+        512,
+        768
+      );
 
       const newPose = {
         id: Date.now().toString(),
@@ -211,14 +244,22 @@ export default function Home() {
     }
   };
 
-  // Generate Expression Variant
   const handleApplyExpression = async (poseId: string) => {
     if (!activeCharacter) return;
+    const targetPose = activeCharacter.poses.find((p) => p.id === poseId);
+    if (!targetPose) return;
+
     setLoading(true);
     try {
-      const fullPrompt = `close-up face avatar, ${expressionPrompt}, facial expression, ${activeCharacter.identityPrompt}`;
-
-      const imageUrl = await fetchLocalForgeSprite(gpuUrl, fullPrompt, 512, 512);
+      // Pass pose sprite into img2img to modify only facial features
+      const imageUrl = await fetchLocalForgeImg2Img(
+        gpuUrl,
+        targetPose.spriteUrl,
+        expressionPrompt,
+        activeCharacter.identityPrompt,
+        512,
+        512
+      );
 
       const newExpr = {
         id: Date.now().toString(),
@@ -247,7 +288,37 @@ export default function Home() {
     }
   };
 
-  if (!isMounted) return null; // Avoid hydration mismatch on initial load
+  const handleStartEdit = (char: CharacterProfile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingCharId(char.id);
+    setEditName(char.name);
+    setEditIdentityPrompt(char.identityPrompt);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingCharId) return;
+    setCharacters((prev) =>
+      prev.map((c) =>
+        c.id === editingCharId
+          ? { ...c, name: editName, identityPrompt: editIdentityPrompt }
+          : c
+      )
+    );
+    setEditingCharId(null);
+  };
+
+  const handleDeleteCharacter = (charId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Delete this character?")) return;
+
+    setCharacters((prev) => prev.filter((c) => c.id !== charId));
+    if (selectedCharacterId === charId) {
+      const remaining = characters.filter((c) => c.id !== charId);
+      setSelectedCharacterId(remaining.length > 0 ? remaining[0].id : null);
+    }
+  };
+
+  if (!isMounted) return null;
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-8">
@@ -256,9 +327,8 @@ export default function Home() {
       </h1>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Sidebar: GPU Config & Character Roster */}
+        {/* Sidebar */}
         <div className="space-y-6">
-          {/* GPU Connection Settings */}
           <div className="bg-gray-900 p-4 rounded-xl border border-gray-800">
             <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wider">
               Local GPU Backend URL
@@ -272,7 +342,6 @@ export default function Home() {
             />
           </div>
 
-          {/* Roster List */}
           <div className="bg-gray-900 p-6 rounded-xl border border-gray-800">
             <h2 className="text-xl font-semibold mb-4">Character Roster</h2>
             {characters.length === 0 ? (
@@ -301,7 +370,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Actions: Edit & Delete */}
                     <div className="flex items-center gap-1">
                       <button
                         onClick={(e) => handleStartEdit(c, e)}
@@ -325,9 +393,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Studio Main Workspace */}
+        {/* Workspace */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Navigation Tabs */}
           <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-800">
             <button
               onClick={() => setActiveTab("create")}
@@ -363,7 +430,6 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Edit Modal / Inline Panel */}
           {editingCharId && (
             <div className="bg-blue-950/40 p-6 rounded-xl border border-blue-500 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">Edit Character Profile</h2>
@@ -404,7 +470,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Panel 1: Create Character */}
           {activeTab === "create" && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">
@@ -441,7 +506,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Panel 2: Apply Pose */}
           {activeTab === "pose" && activeCharacter && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">
@@ -467,7 +531,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Panel 3: Expressions & Gallery */}
           {activeTab === "expression" && activeCharacter && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-6">
               <h2 className="text-lg font-bold text-blue-400">
