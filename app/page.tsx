@@ -3,11 +3,11 @@
 import { useState, useEffect } from "react";
 import { CharacterProfile } from "@/types/character";
 
-// 1. Text-to-Image Helper (with ReActor Face Swap for Outfit Generation)
+// 1. Text-to-Image Helper (Step 1 & Step 2 - with ReActor Face Swap)
 async function fetchLocalForgeSprite(
   gpuApiUrl: string,
   prompt: string,
-  referenceHeroImage?: string, // Passes the face anchor to preserve identity across outfits
+  referenceHeroImage?: string, // Hero Anchor base64 image for ReActor consistency
   width = 512,
   height = 768
 ): Promise<string> {
@@ -28,7 +28,7 @@ async function fetchLocalForgeSprite(
     sampler_name: "Euler",
   };
 
-  // ReActor Face Swap: Locks the character's face onto the new outfit sprite
+  // Enable ReActor Face Swap if a reference Hero Anchor image exists
   if (referenceHeroImage && referenceHeroImage.startsWith("data:image")) {
     const cleanBase64HeroAnchor = referenceHeroImage.replace(
       /^data:image\/\w+;base64,/,
@@ -67,7 +67,7 @@ async function fetchLocalForgeSprite(
     const errorJson = await response.json().catch(() => null);
     console.error("Forge API Error Details:", errorJson);
     throw new Error(
-      `GPU Server Error (${response.status}). Check browser F12 console for details.`
+      `GPU Server returned status ${response.status}. Check browser F12 console for details.`
     );
   }
 
@@ -81,14 +81,14 @@ async function fetchLocalForgeSprite(
   return `data:image/png;base64,${base64Image}`;
 }
 
-// 2. Image-to-Image Helper (For facial expressions on specific outfits)
+// 2. Image-to-Image Helper (Step 3 - Face Expressions matching 512x768 aspect ratio)
 async function fetchLocalForgeImg2Img(
   gpuApiUrl: string,
   outfitSpriteBase64: string,
   expressionPrompt: string,
   identityPrompt: string,
   width = 512,
-  height = 512
+  height = 768 // Matched to original 512x768 sprite dimensions to prevent squashing
 ): Promise<string> {
   if (!gpuApiUrl) {
     throw new Error("Please enter a valid Local GPU Backend URL.");
@@ -108,10 +108,10 @@ async function fetchLocalForgeImg2Img(
     },
     body: JSON.stringify({
       init_images: [cleanBase64Sprite],
-      prompt: `close-up face avatar, ${expressionPrompt}, facial expression, ${identityPrompt}, photorealistic raw photo, 8k resolution`,
+      prompt: `facial expression ${expressionPrompt}, ${identityPrompt}, photorealistic raw photo, 8k resolution`,
       negative_prompt:
         "low quality, bad anatomy, distorted face, cartoon, anime, illustration",
-      denoising_strength: 0.35, // Modifies facial expression while keeping outfit 65% intact
+      denoising_strength: 0.35, // Modifies facial expression while preserving body & outfit
       steps: 12,
       width: width,
       height: height,
@@ -121,6 +121,8 @@ async function fetchLocalForgeImg2Img(
   });
 
   if (!response.ok) {
+    const errorJson = await response.json().catch(() => null);
+    console.error("Img2Img Error Details:", errorJson);
     throw new Error("Failed to connect to GPU server for expression generation.");
   }
 
@@ -142,13 +144,13 @@ export default function Home() {
 
   const [activeTab, setActiveTab] = useState<"create" | "outfit" | "expression">("create");
 
-  // Form Inputs
+  // Input states
   const [charName, setCharName] = useState("");
   const [identityPrompt, setIdentityPrompt] = useState(
     "24 year old woman, wavy brown hair, hazel eyes, natural freckles"
   );
-  const [outfitName, setOutfitName] = useState("black leather jacket, dark jeans, casual style");
-  const [expressionPrompt, setExpressionPrompt] = useState("slight warm smile");
+  const [outfitName, setOutfitName] = useState("tailored charcoal blazer, unbuttoned white dress shirt, fitted dark slacks");
+  const [expressionPrompt, setExpressionPrompt] = useState("confident smirk");
 
   // Edit State
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
@@ -159,7 +161,9 @@ export default function Home() {
 
   const activeCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  // Persistence
+  // -----------------------------------------------------------
+  // LocalStorage Persistence
+  // -----------------------------------------------------------
   useEffect(() => {
     const savedCharacters = localStorage.getItem("vn_studio_characters");
     if (savedCharacters) {
@@ -189,6 +193,10 @@ export default function Home() {
     }
   }, [gpuUrl, isMounted]);
 
+  // -----------------------------------------------------------
+  // Character & Studio Actions
+  // -----------------------------------------------------------
+
   // Step 1: Create Character Anchor
   const handleCreateCharacter = async () => {
     if (!charName || !identityPrompt) return;
@@ -216,7 +224,7 @@ export default function Home() {
     }
   };
 
-  // Step 2: Add New Outfit Variation
+  // Step 2: Generate Outfit Sprite (with ReActor Face Swap)
   const handleApplyOutfit = async () => {
     if (!activeCharacter) return;
     setLoading(true);
@@ -225,7 +233,6 @@ export default function Home() {
         outfitName || "casual clothes"
       }, ${activeCharacter.identityPrompt}`;
 
-      // Pass activeCharacter.heroImageUrl so ReActor swaps the face onto the new outfit
       const imageUrl = await fetchLocalForgeSprite(
         gpuUrl,
         fullPrompt,
@@ -236,7 +243,7 @@ export default function Home() {
 
       const newOutfit = {
         id: Date.now().toString(),
-        poseName: outfitName, // Stored under poseName for component compatibility
+        poseName: outfitName,
         spriteUrl: imageUrl,
         expressions: [],
       };
@@ -254,7 +261,7 @@ export default function Home() {
     }
   };
 
-  // Step 3: Expression on Selected Outfit
+  // Step 3: Expression Variant via Img2Img (Preserves 512x768 Scale)
   const handleApplyExpression = async (outfitId: string) => {
     if (!activeCharacter) return;
     const targetOutfit = activeCharacter.poses.find((p) => p.id === outfitId);
@@ -268,7 +275,7 @@ export default function Home() {
         expressionPrompt,
         activeCharacter.identityPrompt,
         512,
-        512
+        768 // Maintains exact aspect ratio matching original outfit sprite
       );
 
       const newExpr = {
@@ -298,6 +305,7 @@ export default function Home() {
     }
   };
 
+  // Edit Profile
   const handleStartEdit = (char: CharacterProfile, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingCharId(char.id);
@@ -317,6 +325,7 @@ export default function Home() {
     setEditingCharId(null);
   };
 
+  // Delete Profile
   const handleDeleteCharacter = (charId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm("Delete this character profile?")) return;
@@ -337,7 +346,7 @@ export default function Home() {
       </h1>
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Sidebar */}
+        {/* Sidebar: Config & Roster */}
         <div className="space-y-6">
           <div className="bg-gray-900 p-4 rounded-xl border border-gray-800">
             <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wider">
@@ -403,8 +412,9 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Workspace */}
+        {/* Studio Main Workspace */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Tabs */}
           <div className="flex bg-gray-900 p-1 rounded-lg border border-gray-800">
             <button
               onClick={() => setActiveTab("create")}
@@ -440,6 +450,7 @@ export default function Home() {
             </button>
           </div>
 
+          {/* Edit Modal */}
           {editingCharId && (
             <div className="bg-blue-950/40 p-6 rounded-xl border border-blue-500 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">Edit Character Profile</h2>
@@ -480,7 +491,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* Step 1: Character Creation */}
+          {/* Step 1: Character Anchor */}
           {activeTab === "create" && (
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">
@@ -492,7 +503,7 @@ export default function Home() {
                   type="text"
                   value={charName}
                   onChange={(e) => setCharName(e.target.value)}
-                  placeholder="e.g. Elena"
+                  placeholder="e.g. Alex"
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
@@ -531,7 +542,7 @@ export default function Home() {
                   type="text"
                   value={outfitName}
                   onChange={(e) => setOutfitName(e.target.value)}
-                  placeholder="e.g. red evening dress, police uniform, summer swimsuit"
+                  placeholder="e.g. tailored charcoal blazer, unbuttoned white dress shirt, fitted dark slacks"
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
@@ -557,7 +568,7 @@ export default function Home() {
                   type="text"
                   value={expressionPrompt}
                   onChange={(e) => setExpressionPrompt(e.target.value)}
-                  placeholder="e.g. angry frown, laughing, surprised"
+                  placeholder="e.g. confident smirk, warm smile, angry frown"
                   className="w-full p-2 bg-gray-800 rounded border border-gray-700 text-white"
                 />
               </div>
