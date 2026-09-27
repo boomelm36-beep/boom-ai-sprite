@@ -35,12 +35,11 @@ async function fetchLocalForgeSprite(
     sampler_name: "Euler",
   };
 
-  // Enable ReActor Face Swap if a reference Hero Anchor image exists
+ // Enable ReActor Face Swap if a reference Hero Anchor image exists
   if (referenceHeroImage && referenceHeroImage.startsWith("data:image")) {
-    const cleanBase64HeroAnchor = referenceHeroImage.replace(
-      /^data:image\/\w+;base64,/,
-      ""
-    );
+    const cleanBase64HeroAnchor = referenceHeroImage
+      .replace(/^data:image\/\w+;base64,/, "")
+      .trim();
 
     bodyPayload.alwayson_scripts = {
       reactor: {
@@ -54,7 +53,7 @@ async function fetchLocalForgeSprite(
           1,                     // 6: Restoration visibility
           true,                  // 7: Restore face first
           "CUDA",                // 8: Execution provider
-          0,                     // 9: Weight
+          1,                     // 9: Weight (MUST BE 1, NOT 0)
           false,                 // 10: Upscale
         ],
       },
